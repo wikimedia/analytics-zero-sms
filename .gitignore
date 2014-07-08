@@ -1,0 +1,7 @@
+/.idea
+/data
+/private.py
+*.pyc
+/ResultGraphs.xlsx
+/state
+/graphs
