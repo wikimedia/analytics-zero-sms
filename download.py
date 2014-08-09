@@ -105,9 +105,9 @@ class Processor(object):
         stateBk = self.settingsFilePath + '.bak'
         with open(stateBk, 'wb') as f:
             json.dump(data, f, indent=True, sort_keys=True)
-        if os.path.exists(self.statsFilePath):
+        if os.path.exists(self.settingsFilePath):
             os.remove(self.settingsFilePath)
-            os.rename(stateBk, self.settingsFilePath)
+        os.rename(stateBk, self.settingsFilePath)
 
     def parseDate(self, value):
         return datetime.strptime(str(value), self.dateFormat) if isinstance(value, basestring) else value
@@ -257,8 +257,9 @@ class Processor(object):
         tmp = parts[0]
         parts[0] = parts[1]
         parts[1] = tmp\
-            .replace(u' [VumiRedis,client] WIKI', u'') \
-            .replace(u' [HTTP11ClientProtocol,client] WIKI', u'') \
+            .replace(u' [VumiRedis,client]', u'') \
+            .replace(u' [HTTP11ClientProtocol,client]', u'') \
+            .replace(u' WIKI', u'') \
             .replace(u'+0000', u'')
 
         if len(parts) > 5 and parts[5].startswith(u'content='):
@@ -316,7 +317,7 @@ class Processor(object):
             if self.enableDownload:
                 self.download()
             files = os.listdir(self.dataDir)
-            # files = itertools.chain([os.path.join('pc', f) for f in os.listdir(os.path.join(self.dataDir, 'pc'))], files)
+            files = itertools.chain([os.path.join('pc', f) for f in os.listdir(os.path.join(self.dataDir, 'pc'))], files)
             self.combineDataFiles(files)
 
             self.generateGraphData()
