@@ -40,8 +40,8 @@ def loadData(filename):
             yield line.strip('\r\n').split('\t')
 
 
-def addStat(stats, date, dataType, xcs, via, ipset, https, lang, site):
-    key = (date, dataType, xcs, via, ipset, 'https' if https else 'http', lang, site)
+def addStat(stats, date, dataType, xcs, via, ipset, https, lang, subdomain, site):
+    key = (date, dataType, xcs, via, ipset, 'https' if https else 'http', lang, subdomain, site)
     if key in stats:
         stats[key] += 1
     else:
@@ -81,7 +81,7 @@ class LogProcessor(object):
             logDatePattern = r'\d+'
         logReStr = r'zero\.tsv\.log-(' + logDatePattern + ')\.gz'
         self.logFileRe = re.compile(r'^' + logReStr + r'$', re.IGNORECASE)
-        self.statFileRe = re.compile(r'^(' + logReStr + r')__\d+\.json$', re.IGNORECASE)
+        self.statFileRe = re.compile(r'^(' + logReStr + r')__\d+\.tsv$', re.IGNORECASE)
         self.urlRe = re.compile(r'^https?://([^/]+)', re.IGNORECASE)
         self.duplUrlRe = re.compile(r'^(https?://.+)\1', re.IGNORECASE)
         self.zcmdRe = re.compile(r'zcmd=([^&]+)', re.IGNORECASE)
@@ -205,16 +205,16 @@ class LogProcessor(object):
 
             if len(l) < 16:
                 safePrint(u'String too short - %d parts\n%s' % (len(l), line))
-                addStat(stats, fileDt, 'ERR', '000-00', 'ERR', 'ERR', False, 'short-str', str(len(l)))
+                addStat(stats, fileDt, 'ERR', '000-00', 'ERR', 'ERR', False, '', 'short-str', str(len(l)))
                 continue
             analytics = l[-1]
             if '=' not in analytics:  # X-Analytics should have at least some values
                 safePrint(u'Analytics is not valid - "%s"\n%s' % (analytics, line))
-                addStat(stats, fileDt, 'ERR', '000-00', 'ERR', 'ERR', False, 'analytics', '')
+                addStat(stats, fileDt, 'ERR', '000-00', 'ERR', 'ERR', False, '', 'analytics', '')
                 continue
             verb = l[7]
             analytics = dict([x.split('=', 2) for x in set(analytics.split(';'))])
-            xcs = analytics['zero'] if 'zero' in analytics else None
+            xcs = analytics['zero'].rstrip('|') if 'zero' in analytics else None
             (cache, httpCode) = l[5].split('/', 2)
             via = analytics['proxy'].upper() if 'proxy' in analytics else 'DIRECT'
             ipset = analytics['zeronet'] if 'zeronet' in analytics else 'default'
@@ -230,7 +230,7 @@ class LogProcessor(object):
             m = self.urlRe.match(url)
             if not m:
                 safePrint(u'URL parsing failed: "%s"\n%s' % (url, line))
-                addStat(stats, fileDt, 'ERR', xcs, via, ipset, https, 'url', '')
+                addStat(stats, fileDt, 'ERR', xcs, via, ipset, https, '', 'url', '')
                 continue
             host = m.group(1)
             if host.endswith(':80'):
@@ -241,32 +241,33 @@ class LogProcessor(object):
             if hostParts[0] == 'www':
                 del hostParts[0]
             lang = ''
+            subdomain = ''
             if len(hostParts) >= 2:
                 hostParts.pop()  # assume last element is the domain root, e.g. org, net, info, net, ...
                 site = hostParts.pop()
                 if hostParts:
                     subdomain = hostParts.pop()
                     if subdomain in validSubDomains:
-                        site = subdomain + '.' + site
                         lang = hostParts.pop() if hostParts else ''
                     else:
                         lang = subdomain
+                        subdomain = ''
             else:
                 hostParts = False
                 site = ''
 
             if hostParts or False == hostParts:
                 safePrint(u'Unknown host %s\n%s' % (host, line))
-                addStat(stats, fileDt, 'ERR', xcs, via, ipset, https, 'host', host)
+                addStat(stats, fileDt, 'ERR', xcs, via, ipset, https, '', 'host', host)
                 continue
 
-            addStat(stats, dt, 'STAT', xcs, via, ipset, https, 'cache', cache)
-            addStat(stats, dt, 'STAT', xcs, via, ipset, https, 'verb', verb)
-            addStat(stats, dt, 'STAT', xcs, via, ipset, https, 'ret', httpCode)
+            addStat(stats, dt, 'STAT', xcs, via, ipset, https, '', 'cache', cache)
+            addStat(stats, dt, 'STAT', xcs, via, ipset, https, '', 'verb', verb)
+            addStat(stats, dt, 'STAT', xcs, via, ipset, https, '', 'ret', httpCode)
 
             if 'ZeroRatedMobileAccess' in url and 'zcmd' in url:
                 m = self.zcmdRe.match(url)
-                addStat(stats, dt, 'STAT', xcs, via, ipset, https, 'zcmd', m.group(1) if m else '?')
+                addStat(stats, dt, 'STAT', xcs, via, ipset, https, '', 'zcmd', m.group(1) if m else '?')
                 continue
             if httpCode not in validHttpCode:
                 continue
@@ -274,7 +275,7 @@ class LogProcessor(object):
                 continue
 
             # Valid request!
-            addStat(stats, dt, 'DATA', xcs, via, ipset, https, lang, site)
+            addStat(stats, dt, 'DATA', xcs, via, ipset, https, lang, subdomain, site)
 
         saveData(statFile, [list(k) + [unicode(v)] for k,v in stats.items()])
 
@@ -289,7 +290,11 @@ class LogProcessor(object):
                 # "2014-08-07|250-99|DIRECT|default|https|ru|m.wikipedia"
                 kp = k.split('|')
                 if len(kp) != 7:
-                    raise ValueError('Unrecognized key %s in file %s' % (k, f))
+                    if len(kp) == 8 and kp[2] == '':
+                        safePrint('Fixing key %s in file %s' % (k, f))
+                        del kp[2]
+                    else:
+                        raise ValueError('Unrecognized key %s in file %s' % (k, f))
                 (dt, xcs, via, ipset, https, lang, site) = kp
                 dt = datetime.strptime(dt, '%Y-%m-%d')
 
@@ -367,11 +372,11 @@ class LogProcessor(object):
 
 
 if __name__ == "__main__":
-    prc = LogProcessor(logDatePattern=(sys.argv[0] if len(sys.argv) > 1 else False))
+    prc = LogProcessor(logDatePattern=(sys.argv[1] if len(sys.argv) > 1 else False))
     # prc.run()
 
     prc.processLogFiles()
-    s = prc.combineStats(os.path.join(prc.pathStats, 'combined-tmp.tsv'))
+    # s = prc.combineStats(os.path.join(prc.pathStats, 'combined-tmp.tsv'))
 
     # file = r'c:\Users\user\mw\shared\zero-sms\data\weblogs\zero.tsv.log-20140808.gz'
     # prc.processLogFile(file, file + '.json')
