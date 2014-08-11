@@ -215,7 +215,12 @@ class LogProcessor(object):
             verb = l[7]
             analytics = dict([x.split('=', 2) for x in set(analytics.split(';'))])
             xcs = analytics['zero'].rstrip('|') if 'zero' in analytics else None
-            (cache, httpCode) = l[5].split('/', 2)
+            tmp = l[5].split('/', 2)
+            if len(tmp) < 2:
+                safePrint(u'Invalid status - "%s"\n%s' % (l[5], line))
+                addStat(stats, fileDt, 'ERR', '000-00', 'ERR', 'ERR', False, '', 'status', '')
+                continue
+            (cache, httpCode) = tmp
             via = analytics['proxy'].upper() if 'proxy' in analytics else 'DIRECT'
             ipset = analytics['zeronet'] if 'zeronet' in analytics else 'default'
             https = 'https' in analytics
@@ -266,7 +271,7 @@ class LogProcessor(object):
             addStat(stats, dt, 'STAT', xcs, via, ipset, https, '', 'ret', httpCode)
 
             if 'ZeroRatedMobileAccess' in url and 'zcmd' in url:
-                m = self.zcmdRe.match(url)
+                m = self.zcmdRe.search(url)
                 addStat(stats, dt, 'STAT', xcs, via, ipset, https, '', 'zcmd', m.group(1) if m else '?')
                 continue
             if httpCode not in validHttpCode:
@@ -371,8 +376,33 @@ class LogProcessor(object):
         return path
 
 
+    def reformatArch(self):
+        for f in os.listdir(self.pathStats):
+            if not self.statFileRe.match(f): continue
+            pth = os.path.join(self.pathStats, f)
+            isFirst = True
+            values = []
+            for parts in loadData(pth):
+                if len(parts) != 9:
+                    if isFirst: break
+                    raise ValueError('Bad file line %s' % f)
+                isFirst = False
+                if parts[1] == 'DATA':
+                    pp = parts[7].split('.', 2)
+                    parts[7] = pp[1] if len(pp) > 1 else pp[0]
+                    parts.insert(7, pp[0] if len(pp) > 1 else '')
+                else:
+                    parts.insert(6, '')
+                values.append(parts)
+
+            saveData(pth + '.out', values)
+
+
 if __name__ == "__main__":
+
     prc = LogProcessor(logDatePattern=(sys.argv[1] if len(sys.argv) > 1 else False))
+
+    # prc.reformatArch()
     # prc.run()
 
     prc.processLogFiles()
