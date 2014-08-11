@@ -13,8 +13,6 @@ try:
 except:
     unidecode = lambda s: s.encode('ascii', 'replace')
 
-import api
-
 
 def safePrint(text):
     print(unidecode(unicode(text)))
@@ -50,8 +48,6 @@ class LogProcessor(object):
         self.rawPathGraphs = data['pathGraphs'] if 'pathGraphs' in data else ''
         self.saveState()
 
-        self.site = api.wikimedia('zero', 'wikimedia', 'https')
-
         if not self.rawPathLogs or not self.rawPathStats or not self.rawPathGraphs:
             raise ValueError('One of the paths is not set, check %s' % settingsFile)
 
@@ -64,6 +60,7 @@ class LogProcessor(object):
         self.logFileRe = re.compile(r'^' + logReStr + r'$', re.IGNORECASE)
         self.statFileRe = re.compile(r'^(' + logReStr + r')__\d+\.json$', re.IGNORECASE)
         self.urlRe = re.compile(r'^https?://([^/]+)', re.IGNORECASE)
+        self.duplUrlRe = re.compile(r'^(https?://.+)\1', re.IGNORECASE)
 
     def saveState(self):
         fmt = lambda v: v.strftime('%Y-%m-%d %H:%M:%S') if isinstance(v, datetime) else v
@@ -94,6 +91,8 @@ class LogProcessor(object):
         return {}
 
     def downloadConfigs(self):
+        import api
+        self.site = api.wikimedia('zero', 'wikimedia', 'https')
         self.site.login(self.username, self.password)
         # https://zero.wikimedia.org/w/api.php?action=zeroportal&type=analyticsconfig&format=jsonfm
         configs = self.site('zeroportal', type='analyticsconfig')['zeroportal']
@@ -186,8 +185,13 @@ class LogProcessor(object):
                 continue
 
             host = l[8]
-            if 'orghttp' in host:
-                host = 'http' + host.split('orghttp', 2)[1]
+            if host.find('http', 1) > -1:
+                m = self.duplUrlRe.match(host)
+                if m:
+                    host = host[len(m.group(1)):]
+                else:
+                    safePrint(u'Duplicate URL failed: "%s"\n%s' % (host, line))
+                    continue
             m = self.urlRe.match(host)
             if not m:
                 safePrint(u'URL parsing failed: "%s"\n%s' % (host, line))
@@ -326,7 +330,7 @@ if __name__ == "__main__":
     # prc.run()
 
     prc.processLogFiles()
-    s = prc.combineStats(os.path.join(prc.pathStats, 'combined-tmp.json'))
+    s = prc.combineStats(os.path.join(prc.pathStats, 'combined-tmp.tsv'))
 
     # file = r'c:\Users\user\mw\shared\zero-sms\data\weblogs\zero.tsv.log-20140808.gz'
     # prc.processLogFile(file, file + '.json')
