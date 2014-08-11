@@ -1,0 +1,336 @@
+# coding=utf-8
+import gzip
+from datetime import datetime
+import os
+import json
+import traceback
+import re
+import io
+import collections
+
+from unidecode import unidecode
+
+import api
+
+
+def safePrint(text):
+    print(unidecode(unicode(text)))
+
+
+def saveJson(filename, data):
+    with open(filename, 'wb') as f:
+        json.dump(data, f, indent=True, sort_keys=True)
+
+
+def loadJson(filename):
+    with io.open(filename, 'rb') as f:
+        return json.load(f)
+
+
+class LogProcessor(object):
+    def __init__(self, settingsFile='settings/weblogs.json'):
+
+        self.settingsFile = self.normalizePath(settingsFile, False)
+
+        data = self.loadState()
+        self.lastErrorMsg = data['lastErrorMsg'] if 'lastErrorMsg' in data else False
+        self.lastErrorTs = data['lastErrorTs'] if 'lastErrorTs' in data else False
+        self.lastGoodRunTs = data['lastGoodRunTs'] if 'lastGoodRunTs' in data else False
+        self.lastProcessedTs = data['lastProcessedTs'] if 'lastProcessedTs' in data else False
+        self.smtpFrom = data['smtpFrom'] if 'smtpFrom' in data else False
+        self.smtpHost = data['smtpHost'] if 'smtpHost' in data else False
+        self.smtpTo = data['smtpTo'] if 'smtpTo' in data else False
+        self.username = data['apiUsername'] if 'apiUsername' in data else ''
+        self.password = data['apiPassword'] if 'apiPassword' in data else ''
+        self.rawPathLogs = data['pathLogs'] if 'pathLogs' in data else ''
+        self.rawPathStats = data['pathStats'] if 'pathStats' in data else ''
+        self.rawPathGraphs = data['pathGraphs'] if 'pathGraphs' in data else ''
+        self.saveState()
+
+        self.site = api.wikimedia('zero', 'wikimedia', 'https')
+
+        if not self.rawPathLogs or not self.rawPathStats or not self.rawPathGraphs:
+            raise ValueError('One of the paths is not set, check %s' % settingsFile)
+
+        self.pathLogs = self.normalizePath(self.rawPathLogs)
+        self.pathStats = self.normalizePath(self.rawPathStats)
+        self.pathGraphs = self.normalizePath(self.rawPathGraphs)
+
+        # zero.tsv.log-20140808.gz
+        logReStr = r'zero\.tsv\.log-\d+\.gz'
+        self.logFileRe = re.compile(r'^' + logReStr + r'$', re.IGNORECASE)
+        self.statFileRe = re.compile(r'^(' + logReStr + r')__\d+\.json$', re.IGNORECASE)
+        self.urlRe = re.compile(r'^https?://([^/]+)', re.IGNORECASE)
+
+    def saveState(self):
+        fmt = lambda v: v.strftime('%Y-%m-%d %H:%M:%S') if isinstance(v, datetime) else v
+
+        data = self.loadState()
+        data['lastErrorMsg'] = self.lastErrorMsg
+        data['lastErrorTs'] = fmt(self.lastErrorTs)
+        data['lastGoodRunTs'] = fmt(self.lastGoodRunTs)
+        data['lastProcessedTs'] = fmt(self.lastProcessedTs)
+        data['smtpFrom'] = self.smtpFrom
+        data['smtpHost'] = self.smtpHost
+        data['smtpTo'] = self.smtpTo
+        data['apiUsername'] = self.username
+        data['apiPassword'] = self.password
+        data['pathLogs'] = self.rawPathLogs
+        data['pathStats'] = self.rawPathStats
+        data['pathGraphs'] = self.rawPathGraphs
+
+        stateBk = self.settingsFile + '.bak'
+        saveJson(stateBk, data)
+        if os.path.exists(self.settingsFile):
+            os.remove(self.settingsFile)
+        os.rename(stateBk, self.settingsFile)
+
+    def loadState(self):
+        if os.path.isfile(self.settingsFile):
+            return loadJson(self.settingsFile)
+        return {}
+
+    def downloadConfigs(self):
+        self.site.login(self.username, self.password)
+        # https://zero.wikimedia.org/w/api.php?action=zeroportal&type=analyticsconfig&format=jsonfm
+        configs = self.site('zeroportal', type='analyticsconfig')['zeroportal']
+        for cfs in configs.values():
+            for c in cfs:
+                c['from'] = datetime.strptime(c['from'], '%Y-%m-%dT%H:%M:%SZ')
+                if c['before'] is None:
+                    c['before'] = datetime.max
+                else:
+                    c['before'] = datetime.strptime(c['before'], '%Y-%m-%dT%H:%M:%SZ')
+                c['languages'] = True if True == c['languages'] else set(c['languages'])
+                c['sites'] = True if True == c['sites'] else set(c['sites'])
+                c['via'] = set(c['via'])
+                c['ipsets'] = set(c['ipsets'])
+        return configs
+
+    def processLogFiles(self):
+
+        safePrint('Processing log files')
+        statFiles = {}
+        for f in os.listdir(self.pathLogs):
+            if not self.logFileRe.match(f):
+                continue
+            logFile = os.path.join(self.pathLogs, f)
+            logSize = os.stat(logFile).st_size
+            statFile = os.path.join(self.pathStats, f + '__' + unicode(logSize) + '.json')
+            statFiles[f] = statFile
+            if not os.path.exists(statFile):
+                self.processLogFile(logFile, statFile)
+
+        # Clean up older stat files (if gz file size has changed)
+        removeFiles = []
+        for f in os.listdir(self.pathStats):
+            m = self.statFileRe.match(f)
+            if not m:
+                continue
+            logFile = m.group(1)
+            statFile = os.path.join(self.pathStats, f)
+            if logFile not in statFiles or statFiles[logFile] == statFile:
+                continue  # The log file has been deleted or its the latest
+            removeFiles.append(statFile)
+        for f in removeFiles:
+            os.remove(f)
+
+    def processLogFile(self, logFile, statFile):
+        """
+            0  cp1046.eqiad.wmnet
+            1  13866141087
+            2  2014-08-07T06:30:46
+            3  0.000130653
+            4  <ip>
+            5  hit/301
+            6  0
+            7  GET
+            8  http://en.m.wikipedia.org/wiki/Royal_Challenge
+            9  -
+            10 text/html; charset=UTF-8
+            11 http://en.m.wikipedia.org/wiki/Royal_Challenge
+            12 -
+            13 Mozilla/5.0 (Linux; U; Android 2.3.5; en-us; ...
+            .. Version/4.0 Mobile Safari/534.30
+            -2 en-US
+            -1 zero=410-01
+        :param logFile:
+        :param statFile:
+        :return:
+        """
+
+        safePrint('Processing %s' % logFile)
+        stats = {}
+        count = 1
+
+        if logFile.endswith('.gz'):
+            streamData = io.TextIOWrapper(io.BufferedReader(gzip.open(logFile)), encoding='utf8', errors='ignore')
+        else:
+            streamData = io.open(logFile, 'r', encoding='utf8', errors='ignore')
+        for line in streamData:
+            if count % 500000 == 0:
+                safePrint('%d lines processed' % count)
+            count += 1
+
+            l = line.strip('\n\r').split('\t')
+
+            if len(l) < 16:
+                safePrint(u'String too short - %d parts\n%s' % (len(l), line))
+                continue
+            analytics = l[-1]
+            if '=' not in analytics:  # X-Analytics should have at least some values
+                safePrint(u'Analytics is not valid - "%s"\n%s' % (analytics, line))
+                continue
+
+            host = l[8]
+            if 'orghttp' in host:
+                host = 'http' + host.split('orghttp', 2)[1]
+            m = self.urlRe.match(host)
+            if not m:
+                safePrint(u'URL parsing failed: "%s"\n%s' % (host, line))
+                continue
+            host = m.group(1)
+            if host.endswith(':80'):
+                host = host[:-3]
+            if host.endswith('.'):
+                host = host[:-1]
+            hostParts = host.split('.')
+            hostParts.pop()  # assume this is the domain root, e.g. org, net, info, net, ...
+            if hostParts[0] == 'www':
+                del hostParts[0]
+            site = hostParts.pop()
+            if hostParts:
+                subdomain = hostParts.pop()
+                if subdomain == 'm' or subdomain == 'zero':
+                    site = subdomain + '.' + site
+                    lang = hostParts.pop() if hostParts else ''
+                else:
+                    lang = subdomain
+            else:
+                lang = ''
+
+            if hostParts:
+                safePrint(u'Unknown host %s\n%s' % (host, line))
+                continue
+
+            analytics = dict([x.split('=', 2) for x in set(analytics.split(';'))])
+            zero = analytics['zero'] if 'zero' in analytics else None
+            via = analytics['proxy'].upper() if 'proxy' in analytics else 'DIRECT'
+            ipset = analytics['zeronet'] if 'zeronet' in analytics else 'default'
+            https = 'https' in analytics
+
+            dt = l[2]
+            dt = dt[0:dt.index('T')]
+            key = '|'.join([dt, zero, via, ipset, 'https' if https else 'http', lang, site])
+            if key in stats:
+                stats[key] += 1
+            else:
+                datetime.strptime(dt, '%Y-%m-%d')  # Validate date - slow operation, do it only once per key
+                stats[key] = 1
+
+        saveJson(statFile, stats)
+
+    def combineStats(self, tempFile=''):
+        safePrint('Combine stat files')
+        configs = self.downloadConfigs()
+        stats = collections.defaultdict(int)
+        for f in os.listdir(self.pathStats):
+            if not self.statFileRe.match(f):
+                continue
+            for k, v in loadJson(os.path.join(self.pathStats, f)).items():
+                # "2014-08-07|250-99|DIRECT|default|https|ru|m.wikipedia"
+                kp = k.split('|')
+                if len(kp) != 7:
+                    raise ValueError('Unrecognized key %s in file %s' % (k, f))
+                (dt, xcs, via, ipset, https, lang, site) = kp
+                dt = datetime.strptime(dt, '%Y-%m-%d')
+
+                isZero = False
+                if xcs in configs:
+                    for conf in configs[xcs]:
+                        langs = conf['languages']
+                        sites = conf['sites']
+                        if conf['from'] <= dt < conf['before'] and \
+                                (not https or conf['https']) and \
+                                (True == langs or lang in langs) and \
+                                (True == sites or site in sites) and \
+                                (via in conf['via']) and \
+                                (ipset in conf['ipsets']):
+                            isZero = True
+                            break
+                status = 'INCL' if isZero else 'EXCL'
+                stats[k + '|' + status] += v
+
+        # convert {"a|b|c":count,...}  into [[a,b,c,count],...]
+        stats = [k.split('|') + [unicode(v)] for k, v in stats.items()]
+        if tempFile:
+            with open(tempFile, "w") as out:
+                out.writelines(['\t'.join(i)+'\n' for i in stats])
+        return stats
+
+    def generateGraphData(self, stats):
+        safePrint('Generating data files to %s' % self.pathGraphs)
+
+    def error(self, error):
+        self.lastErrorTs = datetime.now()
+        self.lastErrorMsg = error
+
+        safePrint(error)
+
+        if not self.smtpHost or not self.smtpFrom or not self.smtpTo:
+            return
+
+        import smtplib
+        from email.mime.text import MIMEText
+        from email.mime.multipart import MIMEMultipart
+
+        msg = MIMEMultipart('alternative')
+        msg['Subject'] = 'SMS report error'
+        msg.attach(MIMEText(error, 'plain', 'utf-8'))
+
+        # m = MIMEText(error, 'plain', 'utf-8')
+        # m['From'] = self.smtpFrom
+        # m['To'] = self.smtpTo
+        # m['Subject'] = msg['Subject']
+
+        smtp = smtplib.SMTP(self.smtpHost)
+        smtp.sendmail(self.smtpFrom, self.smtpTo, msg.as_string().encode('ascii'))
+        smtp.quit()
+
+    def run(self):
+        # noinspection PyBroadException
+        try:
+            self.processLogFiles()
+            stats = self.combineStats()
+            self.generateGraphData(stats)
+            self.lastGoodRunTs = datetime.now()
+        except:
+            self.error(traceback.format_exc())
+        self.saveState()
+
+    def normalizePath(self, path, relToSettings=True):
+        if not os.path.isabs(path) and relToSettings:
+            path = os.path.join(os.path.dirname(self.settingsFile), path)
+        path = os.path.abspath(os.path.normpath(path))
+        dirPath = path if relToSettings else os.path.dirname(path)
+        if not os.path.exists(dirPath):
+            os.makedirs(dirPath)
+        return path
+
+
+if __name__ == "__main__":
+    prc = LogProcessor()
+    # prc.run()
+
+    prc.processLogFiles()
+    s = prc.combineStats(os.path.join(prc.pathStats, 'combined-tmp.json'))
+
+    # file = r'c:\Users\user\mw\shared\zero-sms\data\weblogs\zero.tsv.log-20140808.gz'
+    # prc.processLogFile(file, file + '.json')
+
+    # file = r'c:\Users\user\mw\shared\zero-sms\data\weblogs\zero.tsv.log-20140808.gz'
+    # prc.processLogFile(file, file + '.json')
+
+    # prc.downloadConfigs()
+
+# prc.run()

@@ -1,7 +1,7 @@
-/.idea
-/data
-/private.py
 *.pyc
-/ResultGraphs.xlsx
-/state
+.idea
+/cache
 /graphs
+/logs
+/scripts/settings
+__pycache__

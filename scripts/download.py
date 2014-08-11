@@ -120,7 +120,7 @@ class Processor(object):
         return self.parseDate(m.group('date')) if m else False
 
     def download(self):
-        print '\nDownloading files'
+        print('\nDownloading files')
 
         cn = S3Connection(self.awsKeyId, self.awsSecret)
         prefix = 'prd-vumi-wikipedia.aws.prk-host.net/'
@@ -170,8 +170,8 @@ class Processor(object):
 
     def combineDataFiles(self, sourceFiles):
 
-        print 'Combining files into %s' % self.combinedFilePath
-        print 'Processing %s' % (('files on or after %s' % self.processIfAfter) if self.processIfAfter else 'all files')
+        print('Combining files into %s' % self.combinedFilePath)
+        print('Processing %s' % (('files on or after %s' % self.processIfAfter) if self.processIfAfter else 'all files'))
 
         appendingDataFile = self.combinedFilePath + '.tmp'
         manualLogRe = re.compile(ur'^wikipedia_application_\d+\.log\.\d+\.gz\:')
@@ -189,7 +189,7 @@ class Processor(object):
 
                 srcFilePath = os.path.join(self.dataDir, srcFile)
                 if not os.path.isfile(srcFilePath):
-                    print 'File %s was not found, skipping' % srcFilePath
+                    print('File %s was not found, skipping' % srcFilePath)
                     continue
                 last = False
                 count = 0
@@ -307,7 +307,7 @@ class Processor(object):
             print('Loading parsed data')
             stats.unpickle()
 
-        print('Generating data files to to %s' % self.graphDir)
+        print('Generating data files to %s' % self.graphDir)
         # stats.dumpStats()
         stats.createGraphs()
 
