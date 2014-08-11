@@ -56,7 +56,7 @@ class LogProcessor(object):
         self.pathGraphs = self.normalizePath(self.rawPathGraphs)
 
         # zero.tsv.log-20140808.gz
-        logReStr = r'zero\.tsv\.log-\d+\.gz'
+        logReStr = r'zero\.tsv\.log-(\d+)\.gz'
         self.logFileRe = re.compile(r'^' + logReStr + r'$', re.IGNORECASE)
         self.statFileRe = re.compile(r'^(' + logReStr + r')__\d+\.json$', re.IGNORECASE)
         self.urlRe = re.compile(r'^https?://([^/]+)', re.IGNORECASE)
@@ -114,14 +114,17 @@ class LogProcessor(object):
         safePrint('Processing log files')
         statFiles = {}
         for f in os.listdir(self.pathLogs):
-            if not self.logFileRe.match(f):
+            m = self.logFileRe.match(f)
+            if not m:
                 continue
             logFile = os.path.join(self.pathLogs, f)
             logSize = os.stat(logFile).st_size
             statFile = os.path.join(self.pathStats, f + '__' + unicode(logSize) + '.json')
             statFiles[f] = statFile
             if not os.path.exists(statFile):
-                self.processLogFile(logFile, statFile)
+                err = m.group(1)
+                err = '-'.join([err[0:4], err[4:6], err[6:8]])
+                self.processLogFile(logFile, statFile, err)
 
         # Clean up older stat files (if gz file size has changed)
         removeFiles = []
@@ -137,7 +140,7 @@ class LogProcessor(object):
         for f in removeFiles:
             os.remove(f)
 
-    def processLogFile(self, logFile, statFile):
+    def processLogFile(self, logFile, statFile, errDate):
         """
             0  cp1046.eqiad.wmnet
             1  13866141087
@@ -156,32 +159,32 @@ class LogProcessor(object):
             .. Version/4.0 Mobile Safari/534.30
             -2 en-US
             -1 zero=410-01
-        :param logFile:
-        :param statFile:
-        :return:
         """
 
         safePrint('Processing %s' % logFile)
         stats = {}
-        count = 1
+        count = 0
+        errors = 0
 
         if logFile.endswith('.gz'):
             streamData = io.TextIOWrapper(io.BufferedReader(gzip.open(logFile)), encoding='utf8', errors='ignore')
         else:
             streamData = io.open(logFile, 'r', encoding='utf8', errors='ignore')
         for line in streamData:
+            count += 1
             if count % 500000 == 0:
                 safePrint('%d lines processed' % count)
-            count += 1
 
             l = line.strip('\n\r').split('\t')
 
             if len(l) < 16:
                 safePrint(u'String too short - %d parts\n%s' % (len(l), line))
+                errors += 1
                 continue
             analytics = l[-1]
             if '=' not in analytics:  # X-Analytics should have at least some values
                 safePrint(u'Analytics is not valid - "%s"\n%s' % (analytics, line))
+                errors += 1
                 continue
 
             host = l[8]
@@ -189,12 +192,10 @@ class LogProcessor(object):
                 m = self.duplUrlRe.match(host)
                 if m:
                     host = host[len(m.group(1)):]
-                else:
-                    safePrint(u'Duplicate URL failed: "%s"\n%s' % (host, line))
-                    continue
             m = self.urlRe.match(host)
             if not m:
                 safePrint(u'URL parsing failed: "%s"\n%s' % (host, line))
+                errors += 1
                 continue
             host = m.group(1)
             if host.endswith(':80'):
@@ -202,22 +203,28 @@ class LogProcessor(object):
             if host.endswith('.'):
                 host = host[:-1]
             hostParts = host.split('.')
-            hostParts.pop()  # assume this is the domain root, e.g. org, net, info, net, ...
             if hostParts[0] == 'www':
                 del hostParts[0]
-            site = hostParts.pop()
-            if hostParts:
-                subdomain = hostParts.pop()
-                if subdomain == 'm' or subdomain == 'zero':
-                    site = subdomain + '.' + site
-                    lang = hostParts.pop() if hostParts else ''
-                else:
-                    lang = subdomain
+            lang = ''
+            if len(hostParts) >= 2:
+                hostParts.pop()  # assume last element is the domain root, e.g. org, net, info, net, ...
+                site = hostParts.pop()
+                if hostParts:
+                    subdomain = hostParts.pop()
+                    if subdomain == 'mobile':
+                        subdomain = 'm'
+                    if subdomain == 'm' or subdomain == 'zero':
+                        site = subdomain + '.' + site
+                        lang = hostParts.pop() if hostParts else ''
+                    else:
+                        lang = subdomain
             else:
-                lang = ''
+                hostParts = False
+                site = ''
 
-            if hostParts:
+            if hostParts or False == hostParts:
                 safePrint(u'Unknown host %s\n%s' % (host, line))
+                errors += 1
                 continue
 
             analytics = dict([x.split('=', 2) for x in set(analytics.split(';'))])
@@ -234,7 +241,9 @@ class LogProcessor(object):
             else:
                 datetime.strptime(dt, '%Y-%m-%d')  # Validate date - slow operation, do it only once per key
                 stats[key] = 1
-
+        if errors > 0:
+            key = '|'.join([errDate, '000-00', 'ERROR', 'default', 'http', '', 'errors'])
+            stats[key] = errors
         saveJson(statFile, stats)
 
     def combineStats(self, tempFile=''):
