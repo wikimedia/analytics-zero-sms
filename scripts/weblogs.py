@@ -7,11 +7,12 @@ import traceback
 import re
 import io
 import collections
+import sys
 
 try:
     from unidecode import unidecode
-except:
-    unidecode = lambda s: s.encode('ascii', 'replace')
+except ImportError:
+    unidecode = lambda txt: txt.encode('ascii', 'replace')
 
 
 def safePrint(text):
@@ -28,8 +29,28 @@ def loadJson(filename):
         return json.load(f)
 
 
+def saveData(filename, data):
+    with io.open(filename, 'w', encoding='utf8', errors='ignore') as out:
+        out.writelines(['\t'.join(i) + '\n' for i in data])
+
+
+def loadData(filename):
+    with io.open(filename, 'r', encoding='utf8', errors='ignore') as inp:
+        for line in inp:
+            yield line.strip('\r\n').split('\t')
+
+
+def addStat(stats, date, dataType, xcs, via, ipset, https, lang, site):
+    key = (date, dataType, xcs, via, ipset, 'https' if https else 'http', lang, site)
+    if key in stats:
+        stats[key] += 1
+    else:
+        datetime.strptime(date, '%Y-%m-%d')  # Validate date - slow operation, do it only once per key
+        stats[key] = 1
+
+
 class LogProcessor(object):
-    def __init__(self, settingsFile='settings/weblogs.json'):
+    def __init__(self, settingsFile='settings/weblogs.json', logDatePattern=False):
 
         self.settingsFile = self.normalizePath(settingsFile, False)
 
@@ -56,11 +77,14 @@ class LogProcessor(object):
         self.pathGraphs = self.normalizePath(self.rawPathGraphs)
 
         # zero.tsv.log-20140808.gz
-        logReStr = r'zero\.tsv\.log-(\d+)\.gz'
+        if not logDatePattern:
+            logDatePattern = r'\d+'
+        logReStr = r'zero\.tsv\.log-(' + logDatePattern + ')\.gz'
         self.logFileRe = re.compile(r'^' + logReStr + r'$', re.IGNORECASE)
         self.statFileRe = re.compile(r'^(' + logReStr + r')__\d+\.json$', re.IGNORECASE)
         self.urlRe = re.compile(r'^https?://([^/]+)', re.IGNORECASE)
         self.duplUrlRe = re.compile(r'^(https?://.+)\1', re.IGNORECASE)
+        self.zcmdRe = re.compile(r'zcmd=([^&]+)', re.IGNORECASE)
 
     def saveState(self):
         fmt = lambda v: v.strftime('%Y-%m-%d %H:%M:%S') if isinstance(v, datetime) else v
@@ -92,10 +116,11 @@ class LogProcessor(object):
 
     def downloadConfigs(self):
         import api
-        self.site = api.wikimedia('zero', 'wikimedia', 'https')
-        self.site.login(self.username, self.password)
+
+        site = api.wikimedia('zero', 'wikimedia', 'https')
+        site.login(self.username, self.password)
         # https://zero.wikimedia.org/w/api.php?action=zeroportal&type=analyticsconfig&format=jsonfm
-        configs = self.site('zeroportal', type='analyticsconfig')['zeroportal']
+        configs = site('zeroportal', type='analyticsconfig')['zeroportal']
         for cfs in configs.values():
             for c in cfs:
                 c['from'] = datetime.strptime(c['from'], '%Y-%m-%dT%H:%M:%SZ')
@@ -119,12 +144,12 @@ class LogProcessor(object):
                 continue
             logFile = os.path.join(self.pathLogs, f)
             logSize = os.stat(logFile).st_size
-            statFile = os.path.join(self.pathStats, f + '__' + unicode(logSize) + '.json')
+            statFile = os.path.join(self.pathStats, f + '__' + unicode(logSize) + '.tsv')
             statFiles[f] = statFile
             if not os.path.exists(statFile):
-                err = m.group(1)
-                err = '-'.join([err[0:4], err[4:6], err[6:8]])
-                self.processLogFile(logFile, statFile, err)
+                fileDt = m.group(1)
+                fileDt = '-'.join([fileDt[0:4], fileDt[4:6], fileDt[6:8]])
+                self.processLogFile(logFile, statFile, fileDt)
 
         # Clean up older stat files (if gz file size has changed)
         removeFiles = []
@@ -140,7 +165,7 @@ class LogProcessor(object):
         for f in removeFiles:
             os.remove(f)
 
-    def processLogFile(self, logFile, statFile, errDate):
+    def processLogFile(self, logFile, statFile, fileDt):
         """
             0  cp1046.eqiad.wmnet
             1  13866141087
@@ -164,7 +189,8 @@ class LogProcessor(object):
         safePrint('Processing %s' % logFile)
         stats = {}
         count = 0
-        errors = 0
+        validSubDomains = {'m', 'zero', 'mobile', 'wap'}
+        validHttpCode = {'200', '304'}
 
         if logFile.endswith('.gz'):
             streamData = io.TextIOWrapper(io.BufferedReader(gzip.open(logFile)), encoding='utf8', errors='ignore')
@@ -172,30 +198,39 @@ class LogProcessor(object):
             streamData = io.open(logFile, 'r', encoding='utf8', errors='ignore')
         for line in streamData:
             count += 1
-            if count % 500000 == 0:
+            if count % 1000000 == 0:
                 safePrint('%d lines processed' % count)
 
             l = line.strip('\n\r').split('\t')
 
             if len(l) < 16:
                 safePrint(u'String too short - %d parts\n%s' % (len(l), line))
-                errors += 1
+                addStat(stats, fileDt, 'ERR', '000-00', 'ERR', 'ERR', False, 'short-str', str(len(l)))
                 continue
             analytics = l[-1]
             if '=' not in analytics:  # X-Analytics should have at least some values
                 safePrint(u'Analytics is not valid - "%s"\n%s' % (analytics, line))
-                errors += 1
+                addStat(stats, fileDt, 'ERR', '000-00', 'ERR', 'ERR', False, 'analytics', '')
                 continue
+            verb = l[7]
+            analytics = dict([x.split('=', 2) for x in set(analytics.split(';'))])
+            xcs = analytics['zero'] if 'zero' in analytics else None
+            (cache, httpCode) = l[5].split('/', 2)
+            via = analytics['proxy'].upper() if 'proxy' in analytics else 'DIRECT'
+            ipset = analytics['zeronet'] if 'zeronet' in analytics else 'default'
+            https = 'https' in analytics
+            dt = l[2]
+            dt = dt[0:dt.index('T')]
 
-            host = l[8]
-            if host.find('http', 1) > -1:
-                m = self.duplUrlRe.match(host)
+            url = l[8]
+            if url.find('http', 1) > -1:
+                m = self.duplUrlRe.match(url)
                 if m:
-                    host = host[len(m.group(1)):]
-            m = self.urlRe.match(host)
+                    url = url[len(m.group(1)):]
+            m = self.urlRe.match(url)
             if not m:
-                safePrint(u'URL parsing failed: "%s"\n%s' % (host, line))
-                errors += 1
+                safePrint(u'URL parsing failed: "%s"\n%s' % (url, line))
+                addStat(stats, fileDt, 'ERR', xcs, via, ipset, https, 'url', '')
                 continue
             host = m.group(1)
             if host.endswith(':80'):
@@ -211,9 +246,7 @@ class LogProcessor(object):
                 site = hostParts.pop()
                 if hostParts:
                     subdomain = hostParts.pop()
-                    if subdomain == 'mobile':
-                        subdomain = 'm'
-                    if subdomain == 'm' or subdomain == 'zero':
+                    if subdomain in validSubDomains:
                         site = subdomain + '.' + site
                         lang = hostParts.pop() if hostParts else ''
                     else:
@@ -224,27 +257,26 @@ class LogProcessor(object):
 
             if hostParts or False == hostParts:
                 safePrint(u'Unknown host %s\n%s' % (host, line))
-                errors += 1
+                addStat(stats, fileDt, 'ERR', xcs, via, ipset, https, 'host', host)
                 continue
 
-            analytics = dict([x.split('=', 2) for x in set(analytics.split(';'))])
-            zero = analytics['zero'] if 'zero' in analytics else None
-            via = analytics['proxy'].upper() if 'proxy' in analytics else 'DIRECT'
-            ipset = analytics['zeronet'] if 'zeronet' in analytics else 'default'
-            https = 'https' in analytics
+            addStat(stats, dt, 'STAT', xcs, via, ipset, https, 'cache', cache)
+            addStat(stats, dt, 'STAT', xcs, via, ipset, https, 'verb', verb)
+            addStat(stats, dt, 'STAT', xcs, via, ipset, https, 'ret', httpCode)
 
-            dt = l[2]
-            dt = dt[0:dt.index('T')]
-            key = '|'.join([dt, zero, via, ipset, 'https' if https else 'http', lang, site])
-            if key in stats:
-                stats[key] += 1
-            else:
-                datetime.strptime(dt, '%Y-%m-%d')  # Validate date - slow operation, do it only once per key
-                stats[key] = 1
-        if errors > 0:
-            key = '|'.join([errDate, '000-00', 'ERROR', 'default', 'http', '', 'errors'])
-            stats[key] = errors
-        saveJson(statFile, stats)
+            if 'ZeroRatedMobileAccess' in url and 'zcmd' in url:
+                m = self.zcmdRe.match(url)
+                addStat(stats, dt, 'STAT', xcs, via, ipset, https, 'zcmd', m.group(1) if m else '?')
+                continue
+            if httpCode not in validHttpCode:
+                continue
+            if verb != 'GET':
+                continue
+
+            # Valid request!
+            addStat(stats, dt, 'DATA', xcs, via, ipset, https, lang, site)
+
+        saveData(statFile, [list(k) + [unicode(v)] for k,v in stats.items()])
 
     def combineStats(self, tempFile=''):
         safePrint('Combine stat files')
@@ -281,7 +313,7 @@ class LogProcessor(object):
         stats = [k.split('|') + [unicode(v)] for k, v in stats.items()]
         if tempFile:
             with open(tempFile, "w") as out:
-                out.writelines(['\t'.join(i)+'\n' for i in stats])
+                out.writelines(['\t'.join(i) + '\n' for i in stats])
         return stats
 
     def generateGraphData(self, stats):
@@ -335,7 +367,7 @@ class LogProcessor(object):
 
 
 if __name__ == "__main__":
-    prc = LogProcessor()
+    prc = LogProcessor(logDatePattern=(sys.argv[0] if len(sys.argv) > 1 else False))
     # prc.run()
 
     prc.processLogFiles()
