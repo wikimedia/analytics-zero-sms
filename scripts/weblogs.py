@@ -8,7 +8,10 @@ import re
 import io
 import collections
 
-from unidecode import unidecode
+try:
+    from unidecode import unidecode
+except:
+    unidecode = lambda s: s.encode('ascii', 'replace')
 
 import api
 
