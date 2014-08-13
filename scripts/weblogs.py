@@ -8,6 +8,7 @@ import re
 import io
 import collections
 import sys
+from itertools import imap, ifilter, chain
 
 try:
     from unidecode import unidecode
@@ -29,15 +30,56 @@ def loadJson(filename):
         return json.load(f)
 
 
-def saveData(filename, data):
+def joinValues(vals, separator=u'\t', colCount=0):
+    if 0 < colCount != len(vals):
+        raise ValueError(u'Cannot save value that should have %d columns, not %d\n%s' %
+                         (colCount, len(vals), joinValues(vals, u',')))
+    return unicode(separator).join([unicode(v) for v in vals])
+
+
+def writeData(filename, data, columns, separator=u'\t'):
+    colCount = len(columns)
     with io.open(filename, 'w', encoding='utf8', errors='ignore') as out:
-        out.writelines(['\t'.join(i) + '\n' for i in data])
+        out.writelines(
+            chain(
+                [joinValues(columns, separator) + '\n'],  # header
+                imap(lambda vals: joinValues(vals, separator, colCount) + '\n', data)))
 
 
-def loadData(filename):
+def readData(filename, colCount=0, separator=u'\t'):
+    """
+
+    :param filename:
+    :type colCount int|list
+    :param separator:
+    :return:
+    """
+    if type(colCount) is list:
+        colCount = len(colCount)
+    isFirst = colCount > 0
+    if not isFirst:
+        colCount = -colCount
     with io.open(filename, 'r', encoding='utf8', errors='ignore') as inp:
         for line in inp:
-            yield line.strip('\r\n').split('\t')
+            vals = line.strip(u'\r\n').split(separator)
+            if 0 < colCount != len(vals):
+                raise ValueError('This value should have %d columns, not %d: %s in file %s' %
+                                 (colCount, len(vals), joinValues(vals, u','), filename))
+            if isFirst:
+                isFirst = False
+                continue
+            yield vals
+
+
+def _sanitizeValue(values):
+    if values[1] == 'ERR':
+        values[8] = ''
+    return values
+
+
+def sanitizeToCsv(inpFile, outFile, columns):
+    writeData(outFile,
+              imap(_sanitizeValue, readData(inpFile, columns)), columns, u',')
 
 
 def addStat(stats, date, dataType, xcs, via, ipset, https, lang, subdomain, site):
@@ -47,6 +89,25 @@ def addStat(stats, date, dataType, xcs, via, ipset, https, lang, subdomain, site
     else:
         datetime.strptime(date, '%Y-%m-%d')  # Validate date - slow operation, do it only once per key
         stats[key] = 1
+
+
+columnHeaders10 = u'date,type,xcs,via,ipset,https,lang,subdomain,site,count'.split(',')
+columnHeaders11 = u'date,type,xcs,via,ipset,https,lang,subdomain,site,zero,count'.split(',')
+validSubDomains = {'m', 'zero', 'mobile', 'wap'}
+validHttpCode = {'200', '304'}
+validSites = {
+    u'wikipedia',
+    u'wikimedia',
+    u'wiktionary',
+    u'wikisource',
+    u'wikibooks',
+    u'wikiquote',
+    u'mediawiki',
+    u'wikimediafoundation',
+    u'wikiversity',
+    u'wikinews',
+    u'wikivoyage',
+}
 
 
 class LogProcessor(object):
@@ -84,7 +145,7 @@ class LogProcessor(object):
         self.statFileRe = re.compile(r'^(' + logReStr + r')__\d+\.tsv$', re.IGNORECASE)
         self.urlRe = re.compile(r'^https?://([^/]+)', re.IGNORECASE)
         self.duplUrlRe = re.compile(r'^(https?://.+)\1', re.IGNORECASE)
-        self.zcmdRe = re.compile(r'zcmd=([^&]+)', re.IGNORECASE)
+        self.zcmdRe = re.compile(r'zcmd=([-a-z0-9]+)', re.IGNORECASE)
 
     def saveState(self):
         fmt = lambda v: v.strftime('%Y-%m-%d %H:%M:%S') if isinstance(v, datetime) else v
@@ -189,8 +250,6 @@ class LogProcessor(object):
         safePrint('Processing %s' % logFile)
         stats = {}
         count = 0
-        validSubDomains = {'m', 'zero', 'mobile', 'wap'}
-        validHttpCode = {'200', '304'}
 
         if logFile.endswith('.gz'):
             streamData = io.TextIOWrapper(io.BufferedReader(gzip.open(logFile)), encoding='utf8', errors='ignore')
@@ -214,9 +273,12 @@ class LogProcessor(object):
                 continue
             verb = l[7]
             analytics = dict([x.split('=', 2) for x in set(analytics.split(';'))])
-            xcs = analytics['zero'].rstrip('|') if 'zero' in analytics else None
-            tmp = l[5].split('/', 2)
-            if len(tmp) < 2:
+            if 'zero' in analytics:
+                xcs = analytics['zero'].rstrip('|')
+            else:
+                xcs = None
+            tmp = l[5].split('/')
+            if len(tmp) != 2:
                 safePrint(u'Invalid status - "%s"\n%s' % (l[5], line))
                 addStat(stats, fileDt, 'ERR', '000-00', 'ERR', 'ERR', False, '', 'status', '')
                 continue
@@ -282,49 +344,65 @@ class LogProcessor(object):
             # Valid request!
             addStat(stats, dt, 'DATA', xcs, via, ipset, https, lang, subdomain, site)
 
-        saveData(statFile, [list(k) + [unicode(v)] for k,v in stats.items()])
+        writeData(statFile, [list(k) + [v] for k, v in stats.iteritems()], columnHeaders10)
 
-    def combineStats(self, tempFile=''):
+    def combineStats(self):
         safePrint('Combine stat files')
         configs = self.downloadConfigs()
         stats = collections.defaultdict(int)
         for f in os.listdir(self.pathStats):
             if not self.statFileRe.match(f):
                 continue
-            for k, v in loadJson(os.path.join(self.pathStats, f)).items():
-                # "2014-08-07|250-99|DIRECT|default|https|ru|m.wikipedia"
-                kp = k.split('|')
-                if len(kp) != 7:
-                    if len(kp) == 8 and kp[2] == '':
-                        safePrint('Fixing key %s in file %s' % (k, f))
-                        del kp[2]
+            for vals in readData(os.path.join(self.pathStats, f), columnHeaders10):
+                # "0          1    2      3      4       5    6  7    8         9"
+                # "2014-07-25 DATA 250-99 DIRECT default http ru zero wikipedia 1000"
+                if len(vals) != 10:
+                    if len(vals) == 11 and vals[3] == '':
+                        safePrint('Fixing extra empty xcs in file %s' % f)
+                        del vals[3]
                     else:
-                        raise ValueError('Unrecognized key %s in file %s' % (k, f))
-                (dt, xcs, via, ipset, https, lang, site) = kp
-                dt = datetime.strptime(dt, '%Y-%m-%d')
+                        raise ValueError('Unrecognized key %s in file %s' % (joinValues(vals), f))
+                (dt, typ, xcs, via, ipset, https, lang, subdomain, site, count) = vals
 
-                isZero = False
-                if xcs in configs:
-                    for conf in configs[xcs]:
-                        langs = conf['languages']
-                        sites = conf['sites']
-                        if conf['from'] <= dt < conf['before'] and \
-                                (not https or conf['https']) and \
-                                (True == langs or lang in langs) and \
-                                (True == sites or site in sites) and \
-                                (via in conf['via']) and \
-                                (ipset in conf['ipsets']):
-                            isZero = True
-                            break
-                status = 'INCL' if isZero else 'EXCL'
-                stats[k + '|' + status] += v
+                error = False
+
+                if typ == 'DATA' and site not in validSites:
+                    error = 'bad-site'
+                elif xcs in configs:
+                    if xcs == '404-01b':
+                        vals[2] = xcs = '404-01'
+                        vals[4] = ipset = 'b'
+                    if typ == 'DATA':
+                        dt = datetime.strptime(dt, '%Y-%m-%d')
+                        site2 = subdomain + '.' + site
+                        isZero = False
+                        for conf in configs[xcs]:
+                            langs = conf['languages']
+                            sites = conf['sites']
+                            if conf['from'] <= dt < conf['before'] and \
+                                    (conf['https'] or https == u'http') and \
+                                    (True == langs or lang in langs) and \
+                                    (True == sites or site2 in sites) and \
+                                    (via in conf['via']) and \
+                                    (ipset in conf['ipsets']):
+                                isZero = True
+                                break
+                        vals[9] = u'INCL' if isZero else u'EXCL'
+                    else:
+                        vals[9] = ''
+                else:
+                    # X-CS does not exist, ignore it
+                    error = 'xcs'
+
+                if error:
+                    vals = (vals[0], 'ERR', '000-00', 'ERR', 'ERR', 'http', '', error, '', '')
+
+                key = tuple(vals)
+                stats[key] += int(count)
 
         # convert {"a|b|c":count,...}  into [[a,b,c,count],...]
-        stats = [k.split('|') + [unicode(v)] for k, v in stats.items()]
-        if tempFile:
-            with open(tempFile, "w") as out:
-                out.writelines(['\t'.join(i) + '\n' for i in stats])
-        return stats
+        return [list(k) + [v] for k, v in stats.iteritems()]
+
 
     def generateGraphData(self, stats):
         safePrint('Generating data files to %s' % self.pathGraphs)
@@ -366,6 +444,34 @@ class LogProcessor(object):
             self.error(traceback.format_exc())
         self.saveState()
 
+    def manualRun(self):
+        # prc.reformatArch()
+
+        # prc.processLogFiles()
+        stats = self.combineStats()
+
+        writeData(os.path.join(self.pathStats, 'combined-all.tsv'), stats, columnHeaders11)
+
+        writeData(os.path.join(self.pathStats, 'combined-errors.tsv'),
+                  ifilter(lambda v: v[1] == 'ERR', stats),
+                  columnHeaders11)
+
+        writeData(os.path.join(self.pathStats, 'combined-stats.tsv'),
+                  ifilter(lambda v: v[1] == 'STAT', stats), columnHeaders11)
+
+        writeData(os.path.join(self.pathStats, 'combined-data.tsv'),
+                  ifilter(lambda v: v[1] == 'DATA', stats), columnHeaders11)
+
+
+        # file = r'c:\Users\user\mw\shared\zero-sms\data\weblogs\zero.tsv.log-20140808.gz'
+        # prc.processLogFile(file, file + '.json')
+
+        # file = r'c:\Users\user\mw\shared\zero-sms\data\weblogs\zero.tsv.log-20140808.gz'
+        # prc.processLogFile(file, file + '.json')
+
+        # prc.downloadConfigs()
+
+
     def normalizePath(self, path, relToSettings=True):
         if not os.path.isabs(path) and relToSettings:
             path = os.path.join(os.path.dirname(self.settingsFile), path)
@@ -378,42 +484,14 @@ class LogProcessor(object):
 
     def reformatArch(self):
         for f in os.listdir(self.pathStats):
-            if not self.statFileRe.match(f): continue
+            if not self.statFileRe.match(f):
+                continue
             pth = os.path.join(self.pathStats, f)
-            isFirst = True
-            values = []
-            for parts in loadData(pth):
-                if len(parts) != 9:
-                    if isFirst: break
-                    raise ValueError('Bad file line %s' % f)
-                isFirst = False
-                if parts[1] == 'DATA':
-                    pp = parts[7].split('.', 2)
-                    parts[7] = pp[1] if len(pp) > 1 else pp[0]
-                    parts.insert(7, pp[0] if len(pp) > 1 else '')
-                else:
-                    parts.insert(6, '')
-                values.append(parts)
-
-            saveData(pth + '.out', values)
+            writeData(pth + '.new', readData(pth, -len(columnHeaders10)), columnHeaders10)
+            os.rename(pth, pth + '.old')
 
 
 if __name__ == "__main__":
-
     prc = LogProcessor(logDatePattern=(sys.argv[1] if len(sys.argv) > 1 else False))
-
-    # prc.reformatArch()
     # prc.run()
-
-    prc.processLogFiles()
-    # s = prc.combineStats(os.path.join(prc.pathStats, 'combined-tmp.tsv'))
-
-    # file = r'c:\Users\user\mw\shared\zero-sms\data\weblogs\zero.tsv.log-20140808.gz'
-    # prc.processLogFile(file, file + '.json')
-
-    # file = r'c:\Users\user\mw\shared\zero-sms\data\weblogs\zero.tsv.log-20140808.gz'
-    # prc.processLogFile(file, file + '.json')
-
-    # prc.downloadConfigs()
-
-# prc.run()
+    prc.manualRun()
