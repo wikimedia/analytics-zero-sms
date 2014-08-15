@@ -17,12 +17,12 @@ from itertools import *
 # G.  Of the number above ('F'), how many of those opted to receive more information
 # H.  Average number of 'reply for more' requests during a single session (from the set of users in 'D')
 # I.    Average number of SMS's sent (from the set of users in 'D')
-#J.   Total number of SMS's sent (from the set of users in 'D')
+# J.   Total number of SMS's sent (from the set of users in 'D')
 #
-#Hourly totals for 24-hour daily period
+# Hourly totals for 24-hour daily period
 #
-#A. Number of sessions initiated
-#B. Number of sessions initiated and sent an SMS response of any non-zero number of SMS's
+# A. Number of sessions initiated
+# B. Number of sessions initiated and sent an SMS response of any non-zero number of SMS's
 import re
 import unicodedata
 
@@ -55,8 +55,8 @@ goodStates = [
 # State machine:
 #
 # start   ->   titles   ->   section -> ussdcontent -> smscontent(+) -> more-no-content
-#                v              v
-#        section-invalid  content-invalid
+# v              v
+# section-invalid  content-invalid
 #
 # NOTES:
 #   Sometimes smscontent appears in the logs before ussdcontent
@@ -118,8 +118,8 @@ class Entry(object):
     def values(self):
         return self.__dict__.values()
 
-    def __cmp__(self, dict):
-        return cmp(self.__dict__, dict)
+    def __cmp__(self, d):
+        return cmp(self.__dict__, d)
 
     def __contains__(self, item):
         return item in self.__dict__
@@ -169,8 +169,87 @@ class SumEntry(object):
         return 'sum' not in self.__dict__
 
 
+def splitKey(key):
+    isError = key.startswith(u'err-')
+    if isError:
+        key = key[len(u'err-'):]
+
+    if key.endswith(u'_unique'):
+        key = key[0:-len(u'_unique')]
+        tp = u'unique'
+    elif key.endswith(u'_usrmonth'):
+        key = key[0:-len(u'_usrmonth')]
+        tp = u'usrmonth'
+    elif key == u'newuser':
+        tp = key
+    else:
+        tp = u'total'
+
+    return isError, key, tp
+
+
+def filterData(data, isError=False, isNewUser=False, isUnique=False, knownState=True, includeStats=False,
+               yieldTuple=False):
+    for key, dates in data.items():
+        isErr, state, typ = splitKey(key)
+        if isErr != isError:
+            continue
+        if (typ == u'unique') != isUnique:
+            continue
+        if (typ == u'newuser') != isNewUser:
+            continue
+        if (state in stateNames) != knownState:
+            continue
+        state = stateNames[state]
+        for dateStr, e in dates.items():
+            if not dateStr.startswith(u'daily_'):
+                continue
+            ts = dateStr[len(u'daily_'):]
+            if yieldTuple:
+                yield (ts, state, e.count) if not includeStats else (ts, state, e.count, e.min, e.avg, e.max)
+            else:
+                res = {
+                    u'date': ts,
+                    u'state': state,
+                    u'count': e.count,
+                }
+                if includeStats:
+                    res[u'avg'] = e.avg
+                    res[u'min'] = e.min
+                    res[u'max'] = e.max
+                yield res
+
+
+def createStatesGraph(partnerDir, data, states):
+    d = sorted(filterData(data, yieldTuple=True),
+               key=lambda v:
+               v[0] + v[1])
+    # v[u'date'] + v[u'state'])
+    # groups = groupby(d, key=itemgetter(''))
+    #     [{'type':k, 'items':[x[0] for x in v]} for k, v in groups]
+    # from itertools import groupby, islice
+    # from operator import itemgetter
+    # from collections import defaultdict
+
+    # probably splitting this up in multiple lines would be more readable
+    pivot = (
+        (
+            ts,
+            defaultdict(lambda: '', (islice(d, 1, None) for d in dd))
+        )
+        for ts, dd in groupby(d, itemgetter(0)))
+
+    resultFile = os.path.join(partnerDir, 'states-count-per-day.tsv')
+    with io.open(resultFile, 'w', encoding='utf8') as f:
+        f.write(u'date\t' + u'\t'.join(states) + u'\n')
+        for ts, counts in pivot:
+            f.write(ts + u'\t' + u'\t'.join(str(counts[s]) for s in states) + u'\n')
+
+
 class Stats(object):
     def __init__(self, sourceFile, graphDir, stateFile, partnerMap=None, partnerDirMap=None, salt=''):
+        self.newUserUnique = set()
+        self.unique = defaultdict(dict)
         self.sourceFile = sourceFile
         self.graphDir = graphDir
         self.stateFile = stateFile
@@ -221,7 +300,6 @@ class Stats(object):
             self.newUserUnique.add(userId)
             self._addStats(partner, u'newuser', key2)
 
-
     def _addStatsUnique(self, partner, stage, key2, userId):
         u = self.unique[stage]
         if key2 not in u:
@@ -231,12 +309,11 @@ class Stats(object):
         else:
             return
         self._addStats(partner, stage, key2)
-
     #        if not isError:
     #            key2 = u'hourly_' + ts.strftime(u'%Y-%m-%d %H') + u':00'
     #            self._addStats(partner, key, key2, value)
 
-    def addStats(self, partner, stage, ts, userId, value=-1, isError=False):
+    def addStats(self, partner, stage, ts, userId, value=-1):
         #        self._addStats(partner, key, u'_totals', value)
         #        self._addStatsUnique(partner, stage + u'_unique', u'_totals', id)
 
@@ -262,8 +339,6 @@ class Stats(object):
                 self.addStats(entry.partner, k, ts, userId, v)
 
     def process(self):
-        self.unique = defaultdict(dict)
-        self.newUserUnique = set()
 
         cId = 0
         cTime = 1
@@ -321,10 +396,9 @@ class Stats(object):
                 parts[cPartner] = str(secondsFromStart)
                 del parts[cId]
                 fErr.write(u'\t'.join(parts) + u'\n')
-                self.addStats(entry.partner, u'err--bad-transitions', timestamp, entry.id, secondsFromStart,
-                              isError=True)
+                self.addStats(entry.partner, u'err--bad-transitions', timestamp, entry.id, secondsFromStart)
                 key = (u'err-cont-' if isError else u'err-new-') + transition[0] + u'-' + transition[1]
-                self.addStats(entry.partner, key, timestamp, entry.id, secondsFromStart, isError=True)
+                self.addStats(entry.partner, key, timestamp, entry.id, secondsFromStart)
                 lastParts = False
                 isError = True
             elif not isNew:
@@ -444,7 +518,8 @@ class Stats(object):
         sanitizedPartner = unicode(re.sub('[^\w\s-]', '', sanitizedPartner).strip().lower())
         sanitizedPartner = re.sub('[-\s]+', '-', sanitizedPartner)
         infoFile = os.path.join(dataDir, sanitizedPartner)
-        if not os.path.exists(infoFile): open(infoFile, 'a').close()
+        if not os.path.exists(infoFile):
+            open(infoFile, 'a').close()
 
         # Create dashboard
         dashboardFile = os.path.join(dashboard, partnerKey + '.json')
@@ -457,7 +532,8 @@ class Stats(object):
                     {
                         "name": "Graphs",
                         "graph_ids": [
-                            "http://gp.wmflabs.org/data/datafiles/gp_zero_local/" + partnerKey + "/states-count-per-day.tsv"
+                            "http://gp.wmflabs.org/data/datafiles/gp_zero_local/%s/states-count-per-day.tsv"
+                            % partnerKey
                         ]
                     }
                 ]
@@ -472,88 +548,14 @@ class Stats(object):
         states = sorted([stateNames[v] for v in goodStates])
 
         for partner, data in self.stats.items():
-            if partner in self.partnerDirMap:
-                partnerKey = self.partnerDirMap[partner]
-            else:
+            if partner not in self.partnerDirMap:
                 import hashlib
+
                 partnerKey = hashlib.sha224(partner + self.salt).hexdigest()
                 self.partnerDirMap[partner] = partnerKey
 
             partnerDir = self.makePartnerDir(partner)
-            self.createStatesGraph(partnerDir, data, states)
-
-    def createStatesGraph(self, partnerDir, data, states):
-        d = sorted(self.filterData(data, yieldTuple=True),
-                   key=lambda v:
-                        v[0] + v[1])
-                        # v[u'date'] + v[u'state'])
-        # groups = groupby(d, key=itemgetter(''))
-        #     [{'type':k, 'items':[x[0] for x in v]} for k, v in groups]
-        # from itertools import groupby, islice
-        # from operator import itemgetter
-        # from collections import defaultdict
-
-        # probably splitting this up in multiple lines would be more readable
-        pivot = (
-            (ts,
-             defaultdict(lambda: '', (islice(d, 1, None) for d in dd))
-            )
-            for ts, dd in groupby(d, itemgetter(0)))
-
-        resultFile = os.path.join(partnerDir, 'states-count-per-day.tsv')
-        with io.open(resultFile, 'w', encoding='utf8') as f:
-            f.write(u'date\t' + u'\t'.join(states) + u'\n')
-            for ts, counts in pivot:
-                f.write(ts + u'\t' + u'\t'.join(str(counts[s]) for s in states)+u'\n')
-
-
-    def filterData(self, data, isError=False, isNewUser=False, isUnique=False, knownState=True, includeStats=False, yieldTuple=False):
-        for key, dates in data.items():
-            isErr, state, type = self.splitKey(key)
-            if isErr != isError:
-                continue
-            if (type == u'unique') != isUnique:
-                continue
-            if (type == u'newuser') != isNewUser:
-                continue
-            if (state in stateNames) != knownState:
-                continue
-            state = stateNames[state]
-            for dateStr, e in dates.items():
-                if not dateStr.startswith(u'daily_'):
-                    continue
-                ts = dateStr[len(u'daily_'):]
-                if yieldTuple:
-                    yield (ts, state, e.count) if not includeStats else (ts, state, e.count, e.min, e.avg, e.max)
-                else:
-                    res = {
-                        u'date': ts,
-                        u'state': state,
-                        u'count': e.count,
-                    }
-                    if includeStats:
-                        res[u'avg'] = e.avg
-                        res[u'min'] = e.min
-                        res[u'max'] = e.max
-                    yield res
-
-    def splitKey(self, key):
-        isError = key.startswith(u'err-')
-        if isError:
-            key = key[len(u'err-'):]
-
-        if key.endswith(u'_unique'):
-            key = key[0:-len(u'_unique')]
-            tp = u'unique'
-        elif key.endswith(u'_usrmonth'):
-            key = key[0:-len(u'_usrmonth')]
-            tp = u'usrmonth'
-        elif key == u'newuser':
-            tp = key
-        else:
-            tp = u'total'
-
-        return isError, key, tp
+            createStatesGraph(partnerDir, data, states)
 
 
 if __name__ == '__main__':

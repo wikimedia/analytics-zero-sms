@@ -11,6 +11,16 @@ except ImportError:
     import urlparse
 
 
+class AttrDict(dict):
+    """
+    Taken from http://stackoverflow.com/questions/4984647/accessing-dict-keys-like-an-attribute-in-python/25320214
+    But it seems we should at some point switch to https://pypi.python.org/pypi/attrdict
+    """
+    def __init__(self, *args, **kwargs):
+        super(AttrDict, self).__init__(*args, **kwargs)
+        self.__dict__ = self
+
+
 class ConsoleLog(object):
     """
     Basic console logger. Most frameworks would probably want to implement their own.
@@ -117,7 +127,7 @@ class Site(object):
             request_kw['params'] = kwargs
 
         result = self.request(method, forceSSL=forceSSL, **request_kw)
-        data = result.json()
+        data = result.json(object_hook=AttrDict)
 
         # Handle success and failure
         if 'error' in data:
