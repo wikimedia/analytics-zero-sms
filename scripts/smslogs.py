@@ -124,27 +124,26 @@ class SmsLogProcessor(LogProcessor):
             if key.size == 0:
                 skipReason = u'Skipping empty file %s' % filename
             elif not fileExists:
-                dlReason = u'Downloading new file %s' % filename
+                dlReason = u"it doesn't exist"
             elif key.size != os.stat(filePath).st_size:
-                dlReason = u'The local size {0:s} <> remote {1:s} for file {2:s}'.format(
+                dlReason = u'local size %s <> remote %s' % (
                     locale.format(u"%d", os.stat(filePath).st_size, grouping=True),
-                    locale.format(u"%d", key.size, grouping=True),
-                    filename)
+                    locale.format(u"%d", key.size, grouping=True))
             elif fileDate and self.downloadIfAfter and fileDate > self.downloadIfAfter:
-                dlReason = u'Re-downloading {0:s} since its date is too close to last file date {1:s}'\
-                    .format(filename, self.downloadIfAfter)
+                dlReason = u'date is too close to last file date %s' % self.downloadIfAfter
             else:
                 skipReason = True
 
             if not self.settings.enableDownloadOld and not fileDate:
-                safePrint(u'Skipping legacy-named file %s even though %s' % (filename, dlReason))
+                if isinstance(dlReason, basestring):
+                    safePrint(u'Skipping legacy-named file %s even though %s' % (filename, dlReason))
                 continue
             if skipReason:
                 if isinstance(skipReason, basestring):
                     safePrint(skipReason)
                 continue
 
-            safePrint(dlReason)
+            safePrint(u'Downloading %s because %s' % (filename, dlReason))
             if fileExists:
                 if os.stat(filePath).st_size == 0:
                     safePrint(u'Removing empty file %s' % filePath)

@@ -35,11 +35,15 @@ def joinValues(vals, separator=u'\t', colCount=0):
 
 def writeData(filename, data, columns, separator=u'\t'):
     colCount = len(columns)
-    with io.open(filename, 'w', encoding='utf8', errors='ignore') as out:
+    tmpFile = filename + '.tmp'
+    with io.open(tmpFile, 'w', encoding='utf8', errors='ignore') as out:
         out.writelines(
             chain(
                 [joinValues(columns, separator) + '\n'],  # header
                 imap(lambda vals: joinValues(vals, separator, colCount) + '\n', data)))
+    if os.path.exists(filename):
+        os.remove(filename)
+    os.rename(tmpFile, filename)
 
 
 def readData(filename, colCount=0, separator=u'\t'):
@@ -51,8 +55,8 @@ def readData(filename, colCount=0, separator=u'\t'):
     """
     if type(colCount) is list:
         colCount = len(colCount)
-    isFirst = colCount > 0
-    if not isFirst:
+    skipFirst = colCount > 0
+    if not skipFirst:
         colCount = -colCount
     with io.open(filename, 'r', encoding='utf8', errors='ignore') as inp:
         for line in inp:
@@ -60,8 +64,8 @@ def readData(filename, colCount=0, separator=u'\t'):
             if 0 < colCount != len(vals):
                 raise ValueError('This value should have %d columns, not %d: %s in file %s' %
                                  (colCount, len(vals), joinValues(vals, u','), filename))
-            if isFirst:
-                isFirst = False
+            if skipFirst:
+                skipFirst = False
                 continue
             yield vals
 
