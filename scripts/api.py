@@ -127,7 +127,12 @@ class Site(object):
             request_kw['params'] = kwargs
 
         result = self.request(method, forceSSL=forceSSL, **request_kw)
-        data = result.json(object_hook=AttrDict)
+
+        # Our servers still have requests 0.8.2 ... :(
+        if hasattr(result.__class__, 'json'):
+            data = result.json(object_hook=AttrDict)
+        else:
+            data = json.loads(result.content, object_hook=AttrDict)
 
         # Handle success and failure
         if 'error' in data:
