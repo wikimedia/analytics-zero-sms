@@ -47,6 +47,9 @@ class WebLogProcessor(LogProcessor):
         import api
 
         site = api.wikimedia('zero', 'wikimedia', 'https')
+        if self.proxy:
+            site.session.proxies = {"http": "http://%s:%d" % (self.proxy, self.proxyPort)}
+
         site.login(self.settings.apiUsername, self.settings.apiPassword)
         # https://zero.wikimedia.org/w/api.php?action=zeroportal&type=analyticsconfig&format=jsonfm
         configs = site('zeroportal', type='analyticsconfig').zeroportal

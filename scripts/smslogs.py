@@ -5,7 +5,6 @@ import subprocess
 import locale
 from datetime import timedelta
 import re
-import traceback
 import itertools
 
 from boto.s3.connection import S3Connection
@@ -23,8 +22,34 @@ def generatePassword(size=10, chars=string.ascii_letters + string.digits):
     return ''.join(random.choice(chars) for _ in range(size))
 
 
+def writeLine(dst, line):
+    if not line:
+        return
+    line = line.replace(u'\0', u'\\0')
+    parts = line.split('\t')
+    if parts[1][0] == u'+':
+        return
+    parts = [p[2:-1]
+             if (p.startswith(u"u'") and p.endswith(u"'")) or (p.startswith(u'u"') and p.endswith(u'"'))
+             else p for p in parts]
+    tmp = parts[0]
+    parts[0] = parts[1]
+    parts[1] = tmp \
+        .replace(u' [VumiRedis,client]', u'') \
+        .replace(u' [HTTP11ClientProtocol,client]', u'') \
+        .replace(u' WIKI', u'') \
+        .replace(u'+0000', u'')
+
+    if len(parts) > 5 and parts[5].startswith(u'content='):
+        parts[5] = u'content=' + str(len(parts[5]) - 10)
+
+    if len(parts) > 6:
+        parts[6] = parts[6].replace(u'\0', u'\\0')
+
+    dst.write(u'\t'.join(parts) + u'\n')
+
+
 class SmsLogProcessor(LogProcessor):
-    dateFormat = '%Y-%m-%d'
 
     def __init__(self, settingsFile='settings/smslogs.json'):
         super(SmsLogProcessor, self).__init__(settingsFile, 'web')
@@ -83,7 +108,7 @@ class SmsLogProcessor(LogProcessor):
     def download(self):
         safePrint(u'\nDownloading files')
 
-        cn = S3Connection(self.settings.awsKeyId, self.settings.awsSecret)
+        cn = S3Connection(self.settings.awsKeyId, self.settings.awsSecret, proxy=self.proxy, proxy_port=self.proxyPort)
 
         bucket = cn.get_bucket(self.settings.awsBucket)
         files = bucket.list(self.settings.awsPrefix)
@@ -167,15 +192,15 @@ class SmsLogProcessor(LogProcessor):
                     l = line.strip(u'\n\r')
                     l = manualLogRe.sub('', l, 1)
                     if u' WIKI\t' in l:
-                        self.writeLine(dst, last)
+                        writeLine(dst, last)
                         last = l
                     elif len(l) > 2 and l[0] == u'2' and l[1] == u'0':
-                        self.writeLine(dst, last)
+                        writeLine(dst, last)
                         last = False
                     elif isinstance(last, basestring):
                         last = last + '\t' + l
 
-                self.writeLine(dst, last)
+                writeLine(dst, last)
                 if fileDate and (not self.settings.lastProcessedTs or self.settings.lastProcessedTs < fileDate):
                     self.settings.lastProcessedTs = fileDate
 
@@ -210,35 +235,9 @@ class SmsLogProcessor(LogProcessor):
 
         os.remove(appendingDataFile)
 
-    def writeLine(self, dst, line):
-        if not line:
-            return
-        line = line.replace(u'\0', u'\\0')
-        parts = line.split('\t')
-        if parts[1][0] == u'+':
-            return
-        parts = [p[2:-1]
-                 if (p.startswith(u"u'") and p.endswith(u"'")) or (p.startswith(u'u"') and p.endswith(u'"'))
-                 else p for p in parts]
-        tmp = parts[0]
-        parts[0] = parts[1]
-        parts[1] = tmp \
-            .replace(u' [VumiRedis,client]', u'') \
-            .replace(u' [HTTP11ClientProtocol,client]', u'') \
-            .replace(u' WIKI', u'') \
-            .replace(u'+0000', u'')
-
-        if len(parts) > 5 and parts[5].startswith(u'content='):
-            parts[5] = u'content=' + str(len(parts[5]) - 10)
-
-        if len(parts) > 6:
-            parts[6] = parts[6].replace(u'\0', u'\\0')
-
-        dst.write(u'\t'.join(parts) + u'\n')
-
     def generateGraphData(self, skipParsing=False):
         stats = smsgraphs.Stats(self.combinedFilePath, self.pathGraphs, self.statsFilePath, self.settings.partnerMap,
-                               self.settings.partnerDirMap, self.settings.salt)
+                                self.settings.partnerDirMap, self.settings.salt)
         if not skipParsing:
             safePrint(u'\nParsing data')
             stats.process()

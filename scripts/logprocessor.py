@@ -98,6 +98,13 @@ class LogProcessor(object):
         self.pathCache = self.normalizePath(self.settings.pathCache)
         self.pathGraphs = self.normalizePath(self.settings.pathGraphs)
 
+        self.proxy = self.settings.proxy
+        self.proxyPort = self.settings.proxyPort
+        if not self.proxy or not self.proxyPort:
+            if self.proxy or self.proxyPort:
+                safePrint(u'\nIgnoring proxy settings - both proxy and proxyPort need to be set')
+            self.proxy = self.proxyPort = None
+
     def saveSettings(self):
         self.onSavingSettings()
         try:
@@ -164,6 +171,9 @@ class LogProcessor(object):
         s.pathLogs = 'logs' + suffix
         s.pathCache = 'cache' + suffix
         s.pathGraphs = 'graphs' + suffix
+
+        s.proxy = False
+        s.proxyPort = 0
 
         return s
 
