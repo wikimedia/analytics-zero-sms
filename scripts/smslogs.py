@@ -119,25 +119,32 @@ class SmsLogProcessor(LogProcessor):
             fileDate = self.getFileDate(filename)
             fileExists = os.path.exists(filePath)
 
+            skipReason = False
+            dlReason = False
             if key.size == 0:
-                safePrint(u'Skipping empty file %s' % filename)
-                continue
+                skipReason = u'Skipping empty file %s' % filename
             elif not fileExists:
-                reason = u"it doesn't exist"
+                dlReason = u'Downloading new file %s' % filename
             elif key.size != os.stat(filePath).st_size:
-                reason = u'local size %s <> remote %s' % (
+                dlReason = u'The local size {0:s} <> remote {1:s} for file {2:s}'.format(
                     locale.format(u"%d", os.stat(filePath).st_size, grouping=True),
-                    locale.format(u"%d", key.size, grouping=True))
+                    locale.format(u"%d", key.size, grouping=True),
+                    filename)
             elif fileDate and self.downloadIfAfter and fileDate > self.downloadIfAfter:
-                reason = u'date is too close to last file date %s' % self.downloadIfAfter
+                dlReason = u'Re-downloading {0:s} since its date is too close to last file date {1:s}'\
+                    .format(filename, self.downloadIfAfter)
             else:
-                continue
+                skipReason = True
 
             if not self.settings.enableDownloadOld and not fileDate:
-                safePrint(u'Skipping legacy-named file %s even though %s' % (filename, reason))
+                safePrint(u'Skipping legacy-named file %s even though %s' % (filename, dlReason))
+                continue
+            if skipReason:
+                if isinstance(skipReason, basestring):
+                    safePrint(skipReason)
                 continue
 
-            safePrint(u'Downloading %s because %s' % (filename, reason))
+            safePrint(dlReason)
             if fileExists:
                 if os.stat(filePath).st_size == 0:
                     safePrint(u'Removing empty file %s' % filePath)
@@ -198,7 +205,7 @@ class SmsLogProcessor(LogProcessor):
                         writeLine(dst, last)
                         last = False
                     elif isinstance(last, basestring):
-                        last = last + '\t' + l
+                        last = last + u'\t' + l
 
                 writeLine(dst, last)
                 if fileDate and (not self.settings.lastProcessedTs or self.settings.lastProcessedTs < fileDate):
