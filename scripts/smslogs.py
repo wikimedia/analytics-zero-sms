@@ -112,6 +112,7 @@ class SmsLogProcessor(LogProcessor):
 
         bucket = cn.get_bucket(self.settings.awsBucket)
         files = bucket.list(self.settings.awsPrefix)
+        newDataFound = False
 
         for key in files:
             filename = key.key[len(self.settings.awsPrefix):]
@@ -160,8 +161,15 @@ class SmsLogProcessor(LogProcessor):
             key.get_contents_to_filename(filePath)
             if fileDate and (not self.settings.lastDownloadTs or self.settings.lastDownloadTs < fileDate):
                 self.settings.lastDownloadTs = fileDate
+            newDataFound = True
 
-    def combineDataFiles(self, sourceFiles):
+        return newDataFound
+
+    def combineDataFiles(self):
+
+        sourceFiles = os.listdir(self.pathLogs)
+        # files = itertools.chain([os.path.join('pc', f) for f in os.listdir(os.path.join(self.pathLogs, 'pc'))],
+        #                         files)
 
         safePrint(u'Combining files into %s' % self.combinedFilePath)
         if self.processIfAfter:
@@ -169,11 +177,11 @@ class SmsLogProcessor(LogProcessor):
         else:
             safePrint(u'Processing all files')
 
-        appendingDataFile = self.combinedFilePath + '.tmp'
+        tempFile = self.combinedFilePath + '.tmp'
         manualLogRe = re.compile(r'^wikipedia_application_\d+\.log\.\d+\.gz:')
 
         totalCount = 0
-        with io.open(appendingDataFile, 'w', encoding='utf8') as dst:
+        with io.open(tempFile, 'w', encoding='utf8') as dst:
             for srcFile in sourceFiles:
 
                 fileDate = self.getFileDate(srcFile)
@@ -216,7 +224,7 @@ class SmsLogProcessor(LogProcessor):
             if os.path.exists(sortedOutputFile):
                 os.remove(sortedOutputFile)
 
-            args = [self.settings.sortCmd, '-u', '-o', sortedOutputFile, appendingDataFile]
+            args = [self.settings.sortCmd, '-u', '-o', sortedOutputFile, tempFile]
             originalExists = os.path.exists(self.combinedFilePath)
             if originalExists:
                 args.append(self.combinedFilePath)
@@ -239,7 +247,7 @@ class SmsLogProcessor(LogProcessor):
             except subprocess.CalledProcessError, ex:
                 raise Exception(u'Error %s running %s\nOutput:\n%s' % (ex.returncode, cmd, ex.output))
 
-        os.remove(appendingDataFile)
+        os.remove(tempFile)
 
     def generateGraphData(self, skipParsing=False):
         stats = smsgraphs.Stats(self.combinedFilePath, self.pathGraphs, self.statsFilePath, self.settings.partnerMap,
@@ -257,13 +265,15 @@ class SmsLogProcessor(LogProcessor):
         stats.createGraphs()
 
     def run(self):
+        newDataFound = True
         if self.settings.enableDownload:
-            self.download()
-        files = os.listdir(self.pathLogs)
-        files = itertools.chain([os.path.join('pc', f) for f in os.listdir(os.path.join(self.pathLogs, 'pc'))],
-                                files)
-        self.combineDataFiles(files)
-        self.generateGraphData()
+            newDataFound = self.download()
+
+        if not newDataFound and os.path.isfile(self.combinedFilePath):
+            safePrint('No new data, we are done')
+        else:
+            self.combineDataFiles()
+            self.generateGraphData()
 
 
 if __name__ == "__main__":

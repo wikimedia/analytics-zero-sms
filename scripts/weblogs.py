@@ -36,6 +36,7 @@ class WebLogProcessor(LogProcessor):
         self.urlRe = re.compile(r'^https?://([^/]+)', re.IGNORECASE)
         self.duplUrlRe = re.compile(r'^(https?://.+)\1', re.IGNORECASE)
         self.zcmdRe = re.compile(r'zcmd=([-a-z0-9]+)', re.IGNORECASE)
+        self.combinedFile = os.path.join(self.pathGraphs, 'combined-all.tsv')
 
     def defaultSettings(self, suffix):
         s = super(WebLogProcessor, self).defaultSettings(suffix)
@@ -68,6 +69,7 @@ class WebLogProcessor(LogProcessor):
 
     def processLogFiles(self):
 
+        newDataFound = False
         safePrint('Processing log files')
         statFiles = {}
         for f in os.listdir(self.pathLogs):
@@ -82,6 +84,7 @@ class WebLogProcessor(LogProcessor):
                 fileDt = m.group(1)
                 fileDt = '-'.join([fileDt[0:4], fileDt[4:6], fileDt[6:8]])
                 self.processLogFile(logFile, statFile, fileDt)
+                newDataFound = True
 
         # Clean up older stat files (if gz file size has changed)
         removeFiles = []
@@ -96,6 +99,8 @@ class WebLogProcessor(LogProcessor):
             removeFiles.append(statFile)
         for f in removeFiles:
             os.remove(f)
+
+        return newDataFound
 
     def processLogFile(self, logFile, statFile, fileDt):
         """
@@ -272,7 +277,10 @@ class WebLogProcessor(LogProcessor):
                 stats[key] += int(count)
 
         # convert {"a|b|c":count,...}  into [[a,b,c,count],...]
-        return [list(k) + [v] for k, v in stats.iteritems()]
+
+        writeData(self.combinedFile,
+                  [list(k) + [v] for k, v in stats.iteritems()],
+                  columnHeaders11)
 
     def generateGraphData(self, stats):
         safePrint('Generating data files to %s' % self.pathGraphs)
@@ -288,9 +296,12 @@ class WebLogProcessor(LogProcessor):
                   ifilter(lambda v: v[1] == 'DATA', stats), columnHeaders11)
 
     def run(self):
-        self.processLogFiles()
-        stats = self.combineStats()
-        self.generateGraphData(stats)
+        newDataFound = self.processLogFiles()
+        if not newDataFound and os.path.isfile(self.combinedFile):
+            safePrint('No new data, we are done')
+        else:
+            self.combineStats()
+            self.generateGraphData()
 
     def manualRun(self):
         pass
