@@ -33,6 +33,8 @@ class OperaIpUpdater(ScriptProcessor):
                 text=text,
                 token=zerowiki.token()
             )
+        else:
+            print('Zero has the most recent list of IPs')
 
 if __name__ == '__main__':
     OperaIpUpdater().safeRun()
