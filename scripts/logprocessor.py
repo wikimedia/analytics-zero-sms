@@ -1,11 +1,15 @@
+import csv
 from datetime import datetime
 import io
-from itertools import chain, imap
 import json
 import os
 import traceback
+
 from unidecode import unidecode
+
 from api import AttrDict
+from utils import CsvUnicodeWriter, CsvUnicodeReader
+
 
 validSites = {
     u'wikipedia',
@@ -26,27 +30,26 @@ def safePrint(text):
     print(unidecode(unicode(text)))
 
 
-def joinValues(vals, separator=u'\t', colCount=0):
-    if 0 < colCount != len(vals):
-        raise ValueError(u'Cannot save value that should have %d columns, not %d\n%s' %
-                         (colCount, len(vals), joinValues(vals, u',')))
-    return unicode(separator).join([unicode(v) for v in vals])
+def joinValues(vals):
+    return u','.join([unicode(v) for v in vals])
 
 
-def writeData(filename, data, columns, separator=u'\t'):
-    colCount = len(columns)
+def writeData(filename, data, header, delimiter='\t'):
+    colCount = len(header)
     tmpFile = filename + '.tmp'
-    with io.open(tmpFile, 'w', encoding='utf8', errors='ignore') as out:
-        out.writelines(
-            chain(
-                [joinValues(columns, separator) + '\n'],  # header
-                imap(lambda vals: joinValues(vals, separator, colCount) + '\n', data)))
+    with CsvUnicodeWriter(tmpFile, csv.excel, delimiter=delimiter) as out:
+        out.writerow(header)
+        for vals in data:
+            if 0 < colCount != len(vals):
+                raise ValueError(u'Value should have %d columns, not %d for file %s\n%s' %
+                                 (colCount, len(vals), filename, joinValues(vals)))
+            out.writerow([unicode(v) for v in vals])
     if os.path.exists(filename):
         os.remove(filename)
     os.rename(tmpFile, filename)
 
 
-def readData(filename, colCount=0, separator=u'\t'):
+def readData(filename, colCount=0, delimiter='\t'):
     """
     :type filename str|unicode
     :type colCount int|list
@@ -58,12 +61,11 @@ def readData(filename, colCount=0, separator=u'\t'):
     skipFirst = colCount > 0
     if not skipFirst:
         colCount = -colCount
-    with io.open(filename, 'r', encoding='utf8', errors='ignore') as inp:
-        for line in inp:
-            vals = line.strip(u'\r\n').split(separator)
+    with CsvUnicodeReader(filename, delimiter=delimiter) as inp:
+        for vals in inp:
             if 0 < colCount != len(vals):
                 raise ValueError('This value should have %d columns, not %d: %s in file %s' %
-                                 (colCount, len(vals), joinValues(vals, u','), filename))
+                                 (colCount, len(vals), joinValues(vals), filename))
             if skipFirst:
                 skipFirst = False
                 continue
@@ -80,7 +82,7 @@ def update(a, b):
     return a
 
 
-class LogProcessor(object):
+class ScriptProcessor(object):
     def __init__(self, settingsFile, pathSuffix):
 
         self.dateFormat = '%Y-%m-%d'
@@ -92,22 +94,20 @@ class LogProcessor(object):
         if os.path.isfile(self.settingsFile):
             with io.open(self.settingsFile, 'rb') as f:
                 settings = update(json.load(f, object_hook=AttrDict), settings)
+        else:
+            safePrint('Settings file does not exist, creating default ' + self.settingsFile)
         self.settings = settings
         self.onSettingsLoaded()
 
-        if not self.settings.pathLogs or not self.settings.pathCache or not self.settings.pathGraphs:
-            raise ValueError('One of the paths is not set, check %s' % settingsFile)
-
-        self.pathLogs = self.normalizePath(self.settings.pathLogs)
-        self.pathCache = self.normalizePath(self.settings.pathCache)
-        self.pathGraphs = self.normalizePath(self.settings.pathGraphs)
-
-        self.proxy = self.settings.proxy
-        self.proxyPort = self.settings.proxyPort
-        if not self.proxy or not self.proxyPort:
-            if self.proxy or self.proxyPort:
+        if not self.settings.proxy or not self.settings.proxyPort:
+            if self.settings.proxy or self.settings.proxyPort:
                 safePrint(u'\nIgnoring proxy settings - both proxy and proxyPort need to be set')
-            self.proxy = self.proxyPort = None
+            self.proxy = self.proxyPort = self.proxyUrl = None
+        else:
+            self.proxy = self.settings.proxy
+            self.proxyPort = self.settings.proxyPort
+            self.proxyUrl = {'http': 'http://%s:%d' % (self.proxy, self.proxyPort)}
+
 
     def saveSettings(self):
         self.onSavingSettings()
@@ -158,27 +158,17 @@ class LogProcessor(object):
         smtp.quit()
 
     def defaultSettings(self, suffix):
-        if suffix:
-            suffix = suffix.strip('/\\')
-        suffix = os.sep + suffix if suffix else ''
-
         s = AttrDict()
-
+        s.apiUsername = ''
+        s.apiPassword = ''
         s.lastErrorMsg = ''
         s.lastErrorTs = False
         s.lastGoodRunTs = False
-
         s.smtpFrom = False
         s.smtpHost = False
         s.smtpTo = False
-
-        s.pathLogs = 'logs' + suffix
-        s.pathCache = 'cache' + suffix
-        s.pathGraphs = 'graphs' + suffix
-
         s.proxy = False
         s.proxyPort = 0
-
         return s
 
     def onSavingSettings(self):
@@ -200,6 +190,7 @@ class LogProcessor(object):
     def safeRun(self):
         # noinspection PyBroadException
         try:
+            self.saveSettings() # Ensure the file exists from the start
             self.run()
             self.settings.lastGoodRunTs = datetime.now()
         except:
@@ -208,3 +199,25 @@ class LogProcessor(object):
 
     def run(self):
         pass
+
+
+class LogProcessor(ScriptProcessor):
+    def __init__(self, settingsFile, pathSuffix):
+        super(LogProcessor, self).__init__(settingsFile, pathSuffix)
+
+        if not self.settings.pathLogs or not self.settings.pathCache or not self.settings.pathGraphs:
+            raise ValueError('One of the paths is not set, check %s' % settingsFile)
+
+        self.pathLogs = self.normalizePath(self.settings.pathLogs)
+        self.pathCache = self.normalizePath(self.settings.pathCache)
+        self.pathGraphs = self.normalizePath(self.settings.pathGraphs)
+
+    def defaultSettings(self, suffix):
+        s = super(LogProcessor, self).defaultSettings(suffix)
+        if suffix:
+            suffix = suffix.strip('/\\')
+        suffix = os.sep + suffix if suffix else ''
+        s.pathLogs = 'logs' + suffix
+        s.pathCache = 'cache' + suffix
+        s.pathGraphs = 'graphs' + suffix
+        return s

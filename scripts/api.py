@@ -61,6 +61,14 @@ class ApiPagesModifiedError(ApiError):
         super(ApiError, self).__init__('Pages modified during iteration', data)
 
 
+def parseJson(result):
+    # Our servers still have requests 0.8.2 ... :(
+    if hasattr(result.__class__, 'json'):
+        return result.json(object_hook=AttrDict)
+    else:
+        return json.loads(result.content, object_hook=AttrDict)
+
+
 class Site(object):
     """
     Public properties (member variables at the moment):
@@ -126,13 +134,7 @@ class Site(object):
         else:
             request_kw['params'] = kwargs
 
-        result = self.request(method, forceSSL=forceSSL, **request_kw)
-
-        # Our servers still have requests 0.8.2 ... :(
-        if hasattr(result.__class__, 'json'):
-            data = result.json(object_hook=AttrDict)
-        else:
-            data = json.loads(result.content, object_hook=AttrDict)
+        data = parseJson(self.request(method, forceSSL=forceSSL, **request_kw))
 
         # Handle success and failure
         if 'error' in data:
@@ -252,7 +254,7 @@ def wikimedia(language='en', site='wikipedia', scheme='http', session=None, log=
     return Site(scheme + '://' + language + '.' + site + '.org/w/api.php', session, log)
 
 
-if __name__ == "__main__":
+if __name__ == '__main__':
     w = wikimedia()
     # r = w.query(meta='siteinfo')
     for v in w.queryPages(titles=('Test', 'API'), prop=('links', 'info'), pllimit=20):

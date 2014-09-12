@@ -5,7 +5,6 @@ import subprocess
 import locale
 from datetime import timedelta
 import re
-import itertools
 
 from boto.s3.connection import S3Connection
 
@@ -128,8 +127,8 @@ class SmsLogProcessor(LogProcessor):
                 dlReason = u"it doesn't exist"
             elif key.size != os.stat(filePath).st_size:
                 dlReason = u'local size %s <> remote %s' % (
-                    locale.format(u"%d", os.stat(filePath).st_size, grouping=True),
-                    locale.format(u"%d", key.size, grouping=True))
+                    locale.format(u'%d', os.stat(filePath).st_size, grouping=True),
+                    locale.format(u'%d', key.size, grouping=True))
             elif fileDate and self.downloadIfAfter and fileDate > self.downloadIfAfter:
                 dlReason = u'date is too close to last file date %s' % self.downloadIfAfter
             else:
@@ -276,5 +275,5 @@ class SmsLogProcessor(LogProcessor):
             self.generateGraphData()
 
 
-if __name__ == "__main__":
+if __name__ == '__main__':
     SmsLogProcessor().safeRun()

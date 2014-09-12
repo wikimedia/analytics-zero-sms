@@ -3,7 +3,9 @@ import gzip
 import re
 import collections
 import sys
-from itertools import ifilter
+from pandas import read_table, pivot_table
+from pandas.core.frame import DataFrame
+import numpy as np
 
 from logprocessor import *
 
@@ -36,20 +38,14 @@ class WebLogProcessor(LogProcessor):
         self.urlRe = re.compile(r'^https?://([^/]+)', re.IGNORECASE)
         self.duplUrlRe = re.compile(r'^(https?://.+)\1', re.IGNORECASE)
         self.zcmdRe = re.compile(r'zcmd=([-a-z0-9]+)', re.IGNORECASE)
-        self.combinedFile = os.path.join(self.pathGraphs, 'combined-all.tsv')
-
-    def defaultSettings(self, suffix):
-        s = super(WebLogProcessor, self).defaultSettings(suffix)
-        s.apiUsername = ''
-        s.apiPassword = ''
-        return s
+        self.combinedFile = os.path.join(self.pathCache, 'combined-all.tsv')
 
     def downloadConfigs(self):
         import api
 
         site = api.wikimedia('zero', 'wikimedia', 'https')
         if self.proxy:
-            site.session.proxies = {"http": "http://%s:%d" % (self.proxy, self.proxyPort)}
+            site.session.proxies = {'http': 'http://%s:%d' % (self.proxy, self.proxyPort)}
 
         site.login(self.settings.apiUsername, self.settings.apiPassword)
         # https://zero.wikimedia.org/w/api.php?action=zeroportal&type=analyticsconfig&format=jsonfm
@@ -237,7 +233,7 @@ class WebLogProcessor(LogProcessor):
                         safePrint('Fixing extra empty xcs in file %s' % f)
                         del vals[3]
                     else:
-                        raise ValueError('Unrecognized key %s in file %s' % (joinValues(vals), f))
+                        raise ValueError('Unrecognized key (%s) in file %s' % (joinValues(vals), f))
                 (dt, typ, xcs, via, ipset, https, lang, subdomain, site, count) = vals
 
                 error = False
@@ -278,30 +274,42 @@ class WebLogProcessor(LogProcessor):
 
         # convert {"a|b|c":count,...}  into [[a,b,c,count],...]
 
-        writeData(self.combinedFile,
-                  [list(k) + [v] for k, v in stats.iteritems()],
-                  columnHeaders11)
+        stats = [list(k) + [v] for k, v in stats.iteritems()]
+        writeData(self.combinedFile, stats, columnHeaders11)
+        return stats
 
-    def generateGraphData(self, stats):
+    def generateGraphData(self, stats=None):
         safePrint('Generating data files to %s' % self.pathGraphs)
 
-        writeData(os.path.join(self.pathGraphs, 'combined-all.tsv'),
-                  stats, columnHeaders11)
-        writeData(os.path.join(self.pathGraphs, 'combined-errors.tsv'),
-                  ifilter(lambda v: v[1] == 'ERR', stats),
-                  columnHeaders11)
-        writeData(os.path.join(self.pathGraphs, 'combined-stats.tsv'),
-                  ifilter(lambda v: v[1] == 'STAT', stats), columnHeaders11)
-        writeData(os.path.join(self.pathGraphs, 'combined-data.tsv'),
-                  ifilter(lambda v: v[1] == 'DATA', stats), columnHeaders11)
+        if stats is None:
+            df = read_table(self.combinedFile, sep='\t')
+        else:
+            df = DataFrame(stats, columns=columnHeaders11)
+
+        data = df[df['type'] == 'DATA']
+        xcs = list(data.xcs.unique())
+        for id in xcs:
+            xcsData = data[data.xcs == id]
+
+
+        pt = pivot_table(data, values='count', index=['date'], columns=['xcs','subdomain'], aggfunc=np.sum).head(10)
+
+        return data
+        # writeData(os.path.join(self.pathGraphs, 'combined-errors.tsv'),
+        # ifilter(lambda v: v[1] == 'ERR', stats),
+        #           columnHeaders11)
+        # writeData(os.path.join(self.pathGraphs, 'combined-stats.tsv'),
+        #           ifilter(lambda v: v[1] == 'STAT', stats), columnHeaders11)
+        # writeData(os.path.join(self.pathGraphs, 'combined-data.tsv'),
+        #           ifilter(lambda v: v[1] == 'DATA', stats), columnHeaders11)
 
     def run(self):
         newDataFound = self.processLogFiles()
         if not newDataFound and os.path.isfile(self.combinedFile):
             safePrint('No new data, we are done')
         else:
-            self.combineStats()
-            self.generateGraphData()
+            stats = self.combineStats()
+            self.generateGraphData(stats)
 
     def manualRun(self):
         pass
@@ -312,12 +320,12 @@ class WebLogProcessor(LogProcessor):
         # prc.processLogFile(file, file + '.json')
         # prc.downloadConfigs()
         # for f in os.listdir(self.pathCache):
-        #     if not self.statFileRe.match(f):
+        # if not self.statFileRe.match(f):
         #         continue
         #     pth = os.path.join(self.pathCache, f)
         #     writeData(pth + '.new', readData(pth, -len(columnHeaders10)), columnHeaders10)
         #     os.rename(pth, pth + '.old')
 
 
-if __name__ == "__main__":
+if __name__ == '__main__':
     WebLogProcessor(logDatePattern=(sys.argv[1] if len(sys.argv) > 1 else False)).safeRun()
