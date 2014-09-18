@@ -4,8 +4,9 @@ import gzip
 import re
 import collections
 import sys
-from pandas import read_table
+from pandas import read_table, pivot_table
 from pandas.core.frame import DataFrame
+import numpy as np
 import api
 
 from logprocessor import *
@@ -62,7 +63,6 @@ class WebLogProcessor(LogProcessor):
 
     def processLogFiles(self):
 
-        newDataFound = False
         safePrint('Processing log files')
         statFiles = {}
         for f in os.listdir(self.pathLogs):
@@ -77,7 +77,8 @@ class WebLogProcessor(LogProcessor):
                 fileDt = m.group(1)
                 fileDt = '-'.join([fileDt[0:4], fileDt[4:6], fileDt[6:8]])
                 self.processLogFile(logFile, statFile, fileDt)
-                newDataFound = True
+                if os.path.isfile(self.combinedFile):
+                    os.remove(self.combinedFile)
 
         # Clean up older stat files (if gz file size has changed)
         removeFiles = []
@@ -92,8 +93,6 @@ class WebLogProcessor(LogProcessor):
             removeFiles.append(statFile)
         for f in removeFiles:
             os.remove(f)
-
-        return newDataFound
 
     def processLogFile(self, logFile, statFile, fileDt):
         """
@@ -276,8 +275,6 @@ class WebLogProcessor(LogProcessor):
         return stats
 
     def generateGraphData(self, stats=None):
-        from pandas import pivot_table
-        import numpy as np
         safePrint('Generating data files to %s' % self.pathGraphs)
 
         if stats is None:
@@ -292,7 +289,7 @@ class WebLogProcessor(LogProcessor):
         for id in xcs:
 
             s = StringIO.StringIO()
-            pivot_table(data[data.xcs == id], values='count', index=['date', 'iszero'], aggfunc=np.sum).to_csv(s, header=True)
+            pivot_table(data[data.xcs == id], 'count', ['date', 'iszero'], aggfunc=np.sum).to_csv(s, header=True)
             result = s.getvalue()
 
             # sortColumns = ['date', 'via', 'ipset', 'https', 'lang', 'subdomain', 'site', 'zero']
@@ -320,10 +317,10 @@ class WebLogProcessor(LogProcessor):
             # ifilter(lambda v: v[1] == 'DATA', stats), columnHeaders11)
 
     def run(self):
-        newDataFound = self.processLogFiles()
+        self.processLogFiles()
         if not self.enableUpload:
             safePrint('Uploading disabled, quiting')
-        elif not newDataFound and os.path.isfile(self.combinedFile):
+        elif os.path.isfile(self.combinedFile):
             safePrint('No new data, we are done')
         else:
             stats = self.combineStats()
@@ -354,5 +351,5 @@ class WebLogProcessor(LogProcessor):
 
 
 if __name__ == '__main__':
-    # WebLogProcessor(logDatePattern=(sys.argv[1] if len(sys.argv) > 1 else False)).manualRun()
-    WebLogProcessor(logDatePattern=(sys.argv[1] if len(sys.argv) > 1 else False)).safeRun()
+    WebLogProcessor(logDatePattern=(sys.argv[1] if len(sys.argv) > 1 else False)).manualRun()
+    # WebLogProcessor(logDatePattern=(sys.argv[1] if len(sys.argv) > 1 else False)).safeRun()
