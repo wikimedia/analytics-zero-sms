@@ -30,6 +30,7 @@ class WebLogProcessor(LogProcessor):
     def __init__(self, settingsFile='settings/weblogs.json', logDatePattern=False):
         super(WebLogProcessor, self).__init__(settingsFile, 'web')
 
+        self.enableUpload = not logDatePattern
         # zero.tsv.log-20140808.gz
         if not logDatePattern:
             logDatePattern = r'\d+'
@@ -320,7 +321,9 @@ class WebLogProcessor(LogProcessor):
 
     def run(self):
         newDataFound = self.processLogFiles()
-        if not newDataFound and os.path.isfile(self.combinedFile):
+        if not self.enableUpload:
+            safePrint('Uploading disabled, quiting')
+        elif not newDataFound and os.path.isfile(self.combinedFile):
             safePrint('No new data, we are done')
         else:
             stats = self.combineStats()
