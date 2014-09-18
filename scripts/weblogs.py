@@ -1,11 +1,12 @@
 # coding=utf-8
+import StringIO
 import gzip
 import re
 import collections
 import sys
-from pandas import read_table, pivot_table
+from pandas import read_table
 from pandas.core.frame import DataFrame
-import numpy as np
+import api
 
 from logprocessor import *
 
@@ -39,17 +40,12 @@ class WebLogProcessor(LogProcessor):
         self.duplUrlRe = re.compile(r'^(https?://.+)\1', re.IGNORECASE)
         self.zcmdRe = re.compile(r'zcmd=([-a-z0-9]+)', re.IGNORECASE)
         self.combinedFile = os.path.join(self.pathCache, 'combined-all.tsv')
+        self._wiki = None
 
     def downloadConfigs(self):
-        import api
-
-        site = api.wikimedia('zero', 'wikimedia', 'https')
-        if self.proxy:
-            site.session.proxies = {'http': 'http://%s:%d' % (self.proxy, self.proxyPort)}
-
-        site.login(self.settings.apiUsername, self.settings.apiPassword)
+        wiki = self.getWiki()
         # https://zero.wikimedia.org/w/api.php?action=zeroportal&type=analyticsconfig&format=jsonfm
-        configs = site('zeroportal', type='analyticsconfig').zeroportal
+        configs = wiki('zeroportal', type='analyticsconfig').zeroportal
         for cfs in configs.values():
             for c in cfs:
                 c['from'] = datetime.strptime(c['from'], '%Y-%m-%dT%H:%M:%SZ')
@@ -279,6 +275,8 @@ class WebLogProcessor(LogProcessor):
         return stats
 
     def generateGraphData(self, stats=None):
+        from pandas import pivot_table
+        import numpy as np
         safePrint('Generating data files to %s' % self.pathGraphs)
 
         if stats is None:
@@ -287,21 +285,38 @@ class WebLogProcessor(LogProcessor):
             df = DataFrame(stats, columns=columnHeaders11)
 
         data = df[df['type'] == 'DATA']
+        data['iszero'] = data['zero'].map(lambda v: 'yes' if v == 'INCL' else 'no')
         xcs = list(data.xcs.unique())
+
         for id in xcs:
-            xcsData = data[data.xcs == id]
 
+            s = StringIO.StringIO()
+            pivot_table(data[data.xcs == id], values='count', index=['date', 'iszero'], aggfunc=np.sum).to_csv(s, header=True)
+            result = s.getvalue()
 
-        pt = pivot_table(data, values='count', index=['date'], columns=['xcs','subdomain'], aggfunc=np.sum).head(10)
+            # sortColumns = ['date', 'via', 'ipset', 'https', 'lang', 'subdomain', 'site', 'zero']
+            # outColumns = ['date', 'via', 'ipset', 'https', 'lang', 'subdomain', 'site', 'zero', 'count']
+            # xcsData = data[data.xcs == id].sort(columns=sortColumns)
+            # result = xcsData.sort(columns=sortColumns).to_csv(columns=outColumns, index=False)
 
-        return data
-        # writeData(os.path.join(self.pathGraphs, 'combined-errors.tsv'),
-        # ifilter(lambda v: v[1] == 'ERR', stats),
-        #           columnHeaders11)
-        # writeData(os.path.join(self.pathGraphs, 'combined-stats.tsv'),
-        #           ifilter(lambda v: v[1] == 'STAT', stats), columnHeaders11)
-        # writeData(os.path.join(self.pathGraphs, 'combined-data.tsv'),
-        #           ifilter(lambda v: v[1] == 'DATA', stats), columnHeaders11)
+            wiki = self.getWiki()
+            wiki(
+                'edit',
+                title='RawData:' + id,
+                summary='(bot) refreshing data',
+                text=result,
+                token=wiki.token()
+            )
+
+            # return data
+            # pt = pivot_table(data, values='count', index=['date'], columns=['xcs','subdomain'], aggfunc=np.sum).head(10)
+            # writeData(os.path.join(self.pathGraphs, 'combined-errors.tsv'),
+            # ifilter(lambda v: v[1] == 'ERR', stats),
+            # columnHeaders11)
+            # writeData(os.path.join(self.pathGraphs, 'combined-stats.tsv'),
+            # ifilter(lambda v: v[1] == 'STAT', stats), columnHeaders11)
+            # writeData(os.path.join(self.pathGraphs, 'combined-data.tsv'),
+            # ifilter(lambda v: v[1] == 'DATA', stats), columnHeaders11)
 
     def run(self):
         newDataFound = self.processLogFiles()
@@ -312,7 +327,6 @@ class WebLogProcessor(LogProcessor):
             self.generateGraphData(stats)
 
     def manualRun(self):
-        pass
         # prc.reformatArch()
         # prc.processLogFiles()
         # stats = self.combineStats()
@@ -321,11 +335,21 @@ class WebLogProcessor(LogProcessor):
         # prc.downloadConfigs()
         # for f in os.listdir(self.pathCache):
         # if not self.statFileRe.match(f):
-        #         continue
-        #     pth = os.path.join(self.pathCache, f)
-        #     writeData(pth + '.new', readData(pth, -len(columnHeaders10)), columnHeaders10)
-        #     os.rename(pth, pth + '.old')
+        # continue
+        # pth = os.path.join(self.pathCache, f)
+        # writeData(pth + '.new', readData(pth, -len(columnHeaders10)), columnHeaders10)
+        # os.rename(pth, pth + '.old')
+        self.generateGraphData()
+
+    def getWiki(self):
+        if not self._wiki:
+            self._wiki = api.wikimedia('zero', 'wikimedia', 'https')
+            if self.proxy:
+                self._wiki.session.proxies = {'http': 'http://%s:%d' % (self.proxy, self.proxyPort)}
+            self._wiki.login(self.settings.apiUsername, self.settings.apiPassword)
+        return self._wiki
 
 
 if __name__ == '__main__':
+    # WebLogProcessor(logDatePattern=(sys.argv[1] if len(sys.argv) > 1 else False)).manualRun()
     WebLogProcessor(logDatePattern=(sys.argv[1] if len(sys.argv) > 1 else False)).safeRun()

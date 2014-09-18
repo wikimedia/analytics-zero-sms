@@ -81,6 +81,7 @@ class Site(object):
         self.session = session if session else requests.session()
         self.log = log if log else ConsoleLog()
         self.url = url
+        self.tokens = {}
 
         try:
             script = os.path.abspath(sys.modules['__main__'].__file__)
@@ -144,6 +145,7 @@ class Site(object):
         return data
 
     def login(self, user, password):
+        self.tokens = {}
         res = self('login', lgname=user, lgpassword=password)['login']
         if res['result'] == 'NeedToken':
             res = self('login', lgname=user, lgpassword=password, lgtoken=res['token'])['login']
@@ -221,7 +223,9 @@ class Site(object):
                 a[k] = val
 
     def token(self, tokenType='edit'):
-        return self('tokens', type=tokenType)['tokens'][tokenType + 'token']
+        if tokenType not in self.tokens:
+            self.tokens[tokenType] = self('tokens', type=tokenType)['tokens'][tokenType + 'token']
+        return self.tokens[tokenType]
 
     def request(self, method, forceSSL=False, headers=None, **request_kw):
         """Make either a low level request to the server"""
