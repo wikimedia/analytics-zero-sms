@@ -22,7 +22,7 @@ def addStat(stats, date, dataType, xcs, via, ipset, https, lang, subdomain, site
 
 
 columnHeaders10 = u'date,type,xcs,via,ipset,https,lang,subdomain,site,count'.split(',')
-columnHeaders11 = u'date,type,xcs,via,ipset,https,lang,subdomain,site,zero,count'.split(',')
+columnHeaders11 = u'date,type,xcs,via,ipset,https,lang,subdomain,site,iszero,count'.split(',')
 validSubDomains = {'m', 'zero', 'mobile', 'wap'}
 validHttpCode = {'200', '304'}
 
@@ -294,11 +294,11 @@ class WebLogProcessor(LogProcessor):
         for id in xcs:
 
             s = StringIO.StringIO()
-            pivot_table(data[data.xcs == id], 'count', ['date', 'zero'], aggfunc=np.sum).to_csv(s, header=True)
+            pivot_table(data[data.xcs == id], 'count', ['date', 'iszero'], aggfunc=np.sum).to_csv(s, header=True)
             result = s.getvalue()
 
-            # sortColumns = ['date', 'via', 'ipset', 'https', 'lang', 'subdomain', 'site', 'zero']
-            # outColumns = ['date', 'via', 'ipset', 'https', 'lang', 'subdomain', 'site', 'zero', 'count']
+            # sortColumns = ['date', 'via', 'ipset', 'https', 'lang', 'subdomain', 'site', 'iszero']
+            # outColumns = ['date', 'via', 'ipset', 'https', 'lang', 'subdomain', 'site', 'iszero', 'count']
             # xcsData = data[data.xcs == id].sort(columns=sortColumns)
             # result = xcsData.sort(columns=sortColumns).to_csv(columns=outColumns, index=False)
 
