@@ -216,6 +216,8 @@ class WebLogProcessor(LogProcessor):
 
     def combineStats(self):
         safePrint('Combine stat files')
+        # Logs did not contain the "VIA" X-Analytics tag before this date
+        ignoreViaBefore = datetime(2014, 3, 22)
         configs = self.downloadConfigs()
         stats = collections.defaultdict(int)
         for f in os.listdir(self.pathCache):
@@ -251,7 +253,7 @@ class WebLogProcessor(LogProcessor):
                                     (conf.https or https == u'http') and \
                                     (True == langs or lang in langs) and \
                                     (True == sites or site2 in sites) and \
-                                    (via in conf.via) and \
+                                    (dt < ignoreViaBefore or via in conf.via) and \
                                     (ipset in conf.ipsets):
                                 isZero = True
                                 break
@@ -351,5 +353,5 @@ class WebLogProcessor(LogProcessor):
 
 
 if __name__ == '__main__':
-    WebLogProcessor(logDatePattern=(sys.argv[1] if len(sys.argv) > 1 else False)).manualRun()
-    # WebLogProcessor(logDatePattern=(sys.argv[1] if len(sys.argv) > 1 else False)).safeRun()
+    # WebLogProcessor(logDatePattern=(sys.argv[1] if len(sys.argv) > 1 else False)).manualRun()
+    WebLogProcessor(logDatePattern=(sys.argv[1] if len(sys.argv) > 1 else False)).safeRun()
