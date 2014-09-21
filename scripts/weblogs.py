@@ -257,7 +257,7 @@ class WebLogProcessor(LogProcessor):
                                     (ipset in conf.ipsets):
                                 isZero = True
                                 break
-                        vals[9] = u'INCL' if isZero else u'EXCL'
+                        vals[9] = u'yes' if isZero else u'no'
                     else:
                         vals[9] = ''
                 else:
@@ -284,14 +284,17 @@ class WebLogProcessor(LogProcessor):
         else:
             df = DataFrame(stats, columns=columnHeaders11)
 
+        # filter type==DATA
         data = df[df['type'] == 'DATA']
-        data['iszero'] = data['zero'].map(lambda v: 'yes' if v == 'INCL' else 'no')
+        # filter out last date
+        lastDate = data.date.max()
+        data = data[data.date < lastDate]
         xcs = list(data.xcs.unique())
 
         for id in xcs:
 
             s = StringIO.StringIO()
-            pivot_table(data[data.xcs == id], 'count', ['date', 'iszero'], aggfunc=np.sum).to_csv(s, header=True)
+            pivot_table(data[data.xcs == id], 'count', ['date', 'zero'], aggfunc=np.sum).to_csv(s, header=True)
             result = s.getvalue()
 
             # sortColumns = ['date', 'via', 'ipset', 'https', 'lang', 'subdomain', 'site', 'zero']
