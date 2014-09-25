@@ -42,7 +42,6 @@ class WebLogProcessor(LogProcessor):
         self.duplUrlRe = re.compile(r'^(https?://.+)\1', re.IGNORECASE)
         self.zcmdRe = re.compile(r'zcmd=([-a-z0-9]+)', re.IGNORECASE)
         self.combinedFile = os.path.join(self.pathCache, 'combined-all.tsv')
-        self._wiki = None
 
     def downloadConfigs(self):
         wiki = self.getWiki()
@@ -280,39 +279,45 @@ class WebLogProcessor(LogProcessor):
         safePrint('Generating data files to %s' % self.pathGraphs)
 
         if stats is None:
-            df = read_table(self.combinedFile, sep='\t')
+            allData = read_table(self.combinedFile, sep='\t')
         else:
-            df = DataFrame(stats, columns=columnHeaders11)
+            allData = DataFrame(stats, columns=columnHeaders11)
 
         # filter type==DATA
-        data = df[df['type'] == 'DATA']
+        df = allData[allData['type'] == 'DATA']
         # filter out last date
-        lastDate = data.date.max()
-        data = data[data.date < lastDate]
-        xcs = list(data.xcs.unique())
+        lastDate = df.date.max()
+        df = df[df.date < lastDate]
+        # create an artificial yes/opera value
+        opera = df[(df.via == 'OPERA') & (df.iszero == 'yes')]
+        opera['iszero'] = 'opera'
+        df = df.append(opera)
+
+
+        xcs = list(df.xcs.unique())
 
         for id in xcs:
 
             s = StringIO.StringIO()
-            pivot_table(data[data.xcs == id], 'count', ['date', 'iszero'], aggfunc=np.sum).to_csv(s, header=True)
+            pivot_table(df[df.xcs == id], 'count', ['date', 'iszero'], aggfunc=np.sum).to_csv(s, header=True)
             result = s.getvalue()
 
             # sortColumns = ['date', 'via', 'ipset', 'https', 'lang', 'subdomain', 'site', 'iszero']
             # outColumns = ['date', 'via', 'ipset', 'https', 'lang', 'subdomain', 'site', 'iszero', 'count']
-            # xcsData = data[data.xcs == id].sort(columns=sortColumns)
+            # xcsData = df[df.xcs == id].sort(columns=sortColumns)
             # result = xcsData.sort(columns=sortColumns).to_csv(columns=outColumns, index=False)
 
             wiki = self.getWiki()
             wiki(
                 'edit',
                 title='RawData:' + id,
-                summary='(bot) refreshing data',
+                summary='refreshing data',
                 text=result,
                 token=wiki.token()
             )
 
-            # return data
-            # pt = pivot_table(data, values='count', index=['date'], columns=['xcs','subdomain'], aggfunc=np.sum).head(10)
+            # return df
+            # pt = pivot_table(df, values='count', index=['date'], columns=['xcs','subdomain'], aggfunc=np.sum).head(10)
             # writeData(os.path.join(self.pathGraphs, 'combined-errors.tsv'),
             # ifilter(lambda v: v[1] == 'ERR', stats),
             # columnHeaders11)
@@ -345,15 +350,6 @@ class WebLogProcessor(LogProcessor):
         # writeData(pth + '.new', readData(pth, -len(columnHeaders10)), columnHeaders10)
         # os.rename(pth, pth + '.old')
         self.generateGraphData()
-
-    def getWiki(self):
-        if not self._wiki:
-            self._wiki = api.wikimedia('zero', 'wikimedia', 'https')
-            if self.proxy:
-                self._wiki.session.proxies = {'http': 'http://%s:%d' % (self.proxy, self.proxyPort)}
-            self._wiki.login(self.settings.apiUsername, self.settings.apiPassword)
-        return self._wiki
-
 
 if __name__ == '__main__':
     # WebLogProcessor(logDatePattern=(sys.argv[1] if len(sys.argv) > 1 else False)).manualRun()

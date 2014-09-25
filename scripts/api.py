@@ -5,6 +5,12 @@ from requests.structures import CaseInsensitiveDict
 import os
 import sys
 
+PY3 = sys.version_info[0] == 3
+if PY3:
+    string_types = str,
+else:
+    string_types = basestring,
+
 try:
     import urllib.parse as urlparse
 except ImportError:
@@ -61,12 +67,14 @@ class ApiPagesModifiedError(ApiError):
         super(ApiError, self).__init__('Pages modified during iteration', data)
 
 
-def parseJson(result):
-    # Our servers still have requests 0.8.2 ... :(
-    if hasattr(result.__class__, 'json'):
-        return result.json(object_hook=AttrDict)
+def parseJson(value):
+    if isinstance(value, string_types):
+        return json.loads(value, object_hook=AttrDict)
+    elif hasattr(value.__class__, 'json'):
+        return value.json(object_hook=AttrDict)
     else:
-        return json.loads(result.content, object_hook=AttrDict)
+        # Our servers still have requests 0.8.2 ... :(
+        return json.loads(value.content, object_hook=AttrDict)
 
 
 class Site(object):

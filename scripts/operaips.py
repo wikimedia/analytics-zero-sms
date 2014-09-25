@@ -20,7 +20,7 @@ class OperaIpUpdater(ScriptProcessor):
 
         title = 'Zero:-OPERA'
         res = next(zerowiki.queryPages(titles=title, prop='revisions', rvprop='content'))
-        data = json.loads(res.revisions[0]['*'], object_hook=api.AttrDict)
+        data = api.parseJson(res.revisions[0]['*'])
 
         if sorted(set(data.ipsets.default)) != operaNets:
             data.ipsets.default = operaNets

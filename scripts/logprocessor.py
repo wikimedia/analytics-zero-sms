@@ -8,6 +8,7 @@ import traceback
 from unidecode import unidecode
 
 from api import AttrDict
+import api
 from utils import CsvUnicodeWriter, CsvUnicodeReader
 
 
@@ -85,6 +86,7 @@ def update(a, b):
 class ScriptProcessor(object):
     def __init__(self, settingsFile, pathSuffix):
 
+        self._wiki = None
         self.dateFormat = '%Y-%m-%d'
         self.dateTimeFormat = '%Y-%m-%d %H:%M:%S'
 
@@ -178,6 +180,14 @@ class ScriptProcessor(object):
 
     def onSettingsLoaded(self):
         pass
+
+    def getWiki(self):
+        if not self._wiki:
+            self._wiki = api.wikimedia('zero', 'wikimedia', 'https')
+            if self.proxy:
+                self._wiki.session.proxies = {'http': 'http://%s:%d' % (self.proxy, self.proxyPort)}
+            self._wiki.login(self.settings.apiUsername, self.settings.apiPassword)
+        return self._wiki
 
     # noinspection PyMethodMayBeStatic
     def formatDate(self, value, dateFormat):
