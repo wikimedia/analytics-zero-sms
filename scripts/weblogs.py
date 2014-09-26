@@ -20,8 +20,8 @@ def addStat(stats, date, dataType, xcs, via, ipset, https, lang, subdomain, site
         stats[key] = 1
 
 
-columnHeaders10 = u'date,type,xcs,via,ipset,https,lang,subdomain,site,count'.split(',')
-columnHeaders11 = u'date,type,xcs,via,ipset,https,lang,subdomain,site,iszero,count'.split(',')
+columnHdrCache = u'date,type,xcs,via,ipset,https,lang,subdomain,site,count'.split(',')
+columnHdrResult = u'date,type,xcs,via,ipset,https,lang,subdomain,site,iszero,ison,count'.split(',')
 validSubDomains = {'m', 'zero', 'mobile', 'wap'}
 validHttpCode = {'200', '304'}
 
@@ -210,7 +210,7 @@ class WebLogProcessor(LogProcessor):
             # Valid request!
             addStat(stats, dt, 'DATA', xcs, via, ipset, https, lang, subdomain, site)
 
-        writeData(statFile, [list(k) + [v] for k, v in stats.iteritems()], columnHeaders10)
+        writeData(statFile, [list(k) + [v] for k, v in stats.iteritems()], columnHdrCache)
 
     def combineStats(self):
         safePrint('Combine stat files')
@@ -221,7 +221,7 @@ class WebLogProcessor(LogProcessor):
         for f in os.listdir(self.pathCache):
             if not self.statFileRe.match(f):
                 continue
-            for vals in readData(os.path.join(self.pathCache, f), columnHeaders10):
+            for vals in readData(os.path.join(self.pathCache, f), columnHdrCache):
                 # "0          1    2      3      4       5    6  7    8         9"
                 # "2014-07-25 DATA 250-99 DIRECT default http ru zero wikipedia 1000"
                 if len(vals) != 10:
@@ -240,30 +240,38 @@ class WebLogProcessor(LogProcessor):
                     if xcs == '404-01b':
                         vals[2] = xcs = '404-01'
                         vals[4] = ipset = 'b'
+
+                    isZero = ''
+                    isOn = ''
                     if typ == 'DATA':
                         dt = datetime.strptime(dt, '%Y-%m-%d')
                         site2 = subdomain + '.' + site
                         isZero = False
+                        isEnabled = False
                         for conf in configs[xcs]:
                             langs = conf.languages
                             sites = conf.sites
-                            if conf['from'] <= dt < conf.before and \
-                                    (conf.https or https == u'http') and \
-                                    (True == langs or lang in langs) and \
-                                    (True == sites or site2 in sites) and \
-                                    (dt < ignoreViaBefore or via in conf.via) and \
-                                    (ipset in conf.ipsets):
-                                isZero = True
-                                break
-                        vals[9] = u'yes' if isZero else u'no'
-                    else:
-                        vals[9] = ''
+                            if conf['from'] <= dt < conf.before:
+                                if 'enabled' not in conf or conf.enabled:
+                                    isEnabled = True
+                                if (conf.https or https == u'http') and \
+                                        (True == langs or lang in langs) and \
+                                        (True == sites or site2 in sites) and \
+                                        (dt < ignoreViaBefore or via in conf.via) and \
+                                        (ipset in conf.ipsets):
+                                    isZero = True
+                                    break
+                        isZero = u'yes' if isZero else u'no'
+                        isOn = u'on' if isEnabled else u'off'
+
+                    vals[9] = isZero
+                    vals[10] = isOn
                 else:
                     # X-CS does not exist, ignore it
                     error = 'xcs'
 
                 if error:
-                    vals = (vals[0], 'ERR', '000-00', 'ERR', 'ERR', 'http', '', error, '', '')
+                    vals = (vals[0], 'ERR', '000-00', 'ERR', 'ERR', 'http', '', error, '', '', '')
 
                 key = tuple(vals)
                 stats[key] += int(count)
@@ -271,28 +279,40 @@ class WebLogProcessor(LogProcessor):
         # convert {"a|b|c":count,...}  into [[a,b,c,count],...]
 
         stats = [list(k) + [v] for k, v in stats.iteritems()]
-        writeData(self.combinedFile, stats, columnHeaders11)
+        writeData(self.combinedFile, stats, columnHdrResult)
         return stats
 
     def generateGraphData(self, stats=None):
         safePrint('Generating data files to %s' % self.pathGraphs)
 
+        wiki = self.getWiki()
+
         if stats is None:
             allData = read_table(self.combinedFile, sep='\t')
         else:
-            allData = DataFrame(stats, columns=columnHeaders11)
+            allData = DataFrame(stats, columns=columnHdrResult)
 
-        # filter type==DATA
-        allData = allData[allData['type'] == 'DATA']
-
+        # filter type==DATA and site==wikipedia
+        allData = allData[(allData['type'] == 'DATA') & (allData['site'] == 'wikipedia')]
         # filter out last date
         lastDate = allData.date.max()
         df = allData[allData.date < lastDate]
 
-        xcs = list(df.xcs.unique())
-        wiki = self.getWiki()
+        allEnabled = df[(df.ison == 'on') & (df.iszero == 'yes')]
+        s = StringIO.StringIO()
+        pivot_table(allEnabled, 'count', ['date', 'xcs'], aggfunc=np.sum).to_csv(s, header=True)
+        result = s.getvalue()
 
-        for id in xcs:
+        wiki(
+            'edit',
+            title='RawData:AllEnabled',
+            summary='refreshing data',
+            text=result,
+            token=wiki.token()
+        )
+
+
+        for id in list(df.xcs.unique()):
 
             xcsDf = df[df.xcs == id]
 
@@ -372,5 +392,5 @@ class WebLogProcessor(LogProcessor):
         self.generateGraphData()
 
 if __name__ == '__main__':
-    WebLogProcessor(logDatePattern=(sys.argv[1] if len(sys.argv) > 1 else False)).manualRun()
-    # WebLogProcessor(logDatePattern=(sys.argv[1] if len(sys.argv) > 1 else False)).safeRun()
+    # WebLogProcessor(logDatePattern=(sys.argv[1] if len(sys.argv) > 1 else False)).manualRun()
+    WebLogProcessor(logDatePattern=(sys.argv[1] if len(sys.argv) > 1 else False)).safeRun()
