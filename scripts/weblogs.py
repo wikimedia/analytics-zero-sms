@@ -5,9 +5,8 @@ import re
 import collections
 import sys
 from pandas import read_table, pivot_table
-from pandas.core.frame import DataFrame
+from pandas.core.frame import DataFrame, Series
 import numpy as np
-import api
 
 from logprocessor import *
 
@@ -284,33 +283,54 @@ class WebLogProcessor(LogProcessor):
             allData = DataFrame(stats, columns=columnHeaders11)
 
         # filter type==DATA
-        df = allData[allData['type'] == 'DATA']
-        # filter out last date
-        lastDate = df.date.max()
-        df = df[df.date < lastDate]
-        # create an artificial yes/opera value
-        opera = df[(df.via == 'OPERA') & (df.iszero == 'yes')]
-        opera['iszero'] = 'opera'
-        df = df.append(opera)
+        allData = allData[allData['type'] == 'DATA']
 
+        # filter out last date
+        lastDate = allData.date.max()
+        df = allData[allData.date < lastDate]
 
         xcs = list(df.xcs.unique())
+        wiki = self.getWiki()
 
         for id in xcs:
 
+            xcsDf = df[df.xcs == id]
+
+            # create an artificial yes/opera value
+            opera = xcsDf[(xcsDf.via == 'OPERA') & (xcsDf.iszero == 'yes')]
+            opera['str'] = 'zero-opera'
+
+            yes = xcsDf[xcsDf.iszero == 'yes']
+            yes['str'] = 'zero-all'
+
+            no = xcsDf[xcsDf.iszero == 'no']
+            no['str'] = 'non-zero'
+
+            combined = opera.append(yes).append(no)
+
             s = StringIO.StringIO()
-            pivot_table(df[df.xcs == id], 'count', ['date', 'iszero'], aggfunc=np.sum).to_csv(s, header=True)
-            result = s.getvalue()
+            pivot_table(combined, 'count', ['date', 'str'], aggfunc=np.sum).to_csv(s, header=False)
+            result = 'date,iszero,count\n' + s.getvalue()
 
-            # sortColumns = ['date', 'via', 'ipset', 'https', 'lang', 'subdomain', 'site', 'iszero']
-            # outColumns = ['date', 'via', 'ipset', 'https', 'lang', 'subdomain', 'site', 'iszero', 'count']
-            # xcsData = df[df.xcs == id].sort(columns=sortColumns)
-            # result = xcsData.sort(columns=sortColumns).to_csv(columns=outColumns, index=False)
-
-            wiki = self.getWiki()
             wiki(
                 'edit',
                 title='RawData:' + id,
+                summary='refreshing data',
+                text=result,
+                token=wiki.token()
+            )
+
+
+            byLang = pivot_table(xcsDf, 'count', ['lang'], aggfunc=np.sum).order('count', ascending=False)
+            top = byLang.head(5)
+            other = byLang.sum() - top.sum()
+            s = StringIO.StringIO()
+            Series.to_csv(top, s)
+            result = 'lang,count\n' + s.getvalue() + ('other,%d\n' % other)
+
+            wiki(
+                'edit',
+                title='RawData:' + id + '-langTotal',
                 summary='refreshing data',
                 text=result,
                 token=wiki.token()
@@ -352,5 +372,5 @@ class WebLogProcessor(LogProcessor):
         self.generateGraphData()
 
 if __name__ == '__main__':
-    # WebLogProcessor(logDatePattern=(sys.argv[1] if len(sys.argv) > 1 else False)).manualRun()
-    WebLogProcessor(logDatePattern=(sys.argv[1] if len(sys.argv) > 1 else False)).safeRun()
+    WebLogProcessor(logDatePattern=(sys.argv[1] if len(sys.argv) > 1 else False)).manualRun()
+    # WebLogProcessor(logDatePattern=(sys.argv[1] if len(sys.argv) > 1 else False)).safeRun()
