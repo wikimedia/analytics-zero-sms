@@ -5,25 +5,38 @@ SET hive.exec.compress.output=false;
 -- Extracts zero stats from webrequests into a separate table
 --
 -- Usage:
---     hive -f zero-counts.hql -d year=2014 -d month=9 -d day=15
+--     hive -f zero-counts.hql -d year=2014 -d month=9 -d day=15 -d date=2014-09-15
+--     Date is duplicated because I haven't figured an easy way to set date=printf()
 --
--- Range usage:
---      cat inp.txt | xargs -I % hive -f zero-counts.hql -d year=2014 -d month=10 -d "day="%
--- or
---      for i in {1..5}; do hive -f zero-counts.hql -d year=2014 -d month=10 -d "day="$i; done
-
 -- set hivevar:year=2014;
 -- set hivevar:month=10;
 -- set hivevar:day=21;
+-- set hivevar:date=2014-10-21;
+
+use yurik;
+
+
+CREATE TABLE IF NOT EXISTS yurik.zero_webstats (
+  xcs string,
+  via string,
+  ipset string,
+  https string,
+  lang string,
+  subdomain string,
+  site string,
+  count bigint)
+PARTITIONED BY (
+  date string)
+ROW FORMAT DELIMITED
+  FIELDS TERMINATED BY '\t';
 
 
 INSERT OVERWRITE TABLE yurik.zero_webstats
-    PARTITION(date) IF NOT EXISTS
+    PARTITION(date="${date}") IF NOT EXISTS
     SELECT
-        xcs, via, ipset, https, lang, subdomain, site, COUNT(*) count, date
+        xcs, via, ipset, https, lang, subdomain, site, COUNT(*) count
     FROM (
         SELECT
-            printf('%d-%02d-%02d', ${year}, ${month}, ${day}) date,
             regexp_extract(x_analytics, 'zero=([^\;]+)') xcs,
             regexp_extract(x_analytics, 'proxy=([^\;]+)') via,
             regexp_extract(x_analytics, 'zeronet=([^\;]+)') ipset,
@@ -58,5 +71,32 @@ INSERT OVERWRITE TABLE yurik.zero_webstats
             AND NOT (SPLIT(TRANSLATE(SUBSTR(uri_path, 7), ' ', '_'), '#')[0] RLIKE '^[Uu]ndefined$')
 
     ) prepared
-    GROUP BY date, xcs, via, ipset, https, lang, subdomain, site
-    DISTRIBUTE BY date;
+    GROUP BY xcs, via, ipset, https, lang, subdomain, site
+    DISTRIBUTE BY printf('%d-%02d-%02d', ${year}, ${month}, ${day});
+
+
+-- CREATE TABLE IF NOT EXISTS yurik.zero_webstats_sum (
+--   date string,
+--   tag string,
+--   count bigint)
+-- PARTITIONED BY (
+--   xcs string)
+-- ROW FORMAT DELIMITED
+--   FIELDS TERMINATED BY '\t';
+
+--   xcs string,
+--   via string,
+--   ipset string,
+--   https string,
+--   lang string,
+--   subdomain string,
+--   site string,
+--   count bigint)
+
+-- INSERT OVERWRITE TABLE yurik.zero_webstats_sum
+--     PARTITION(xcs)
+--     SELECT
+--         date, tag, COUNT(*) count, xcs
+--     FROM yurik.zero_webstats
+--     GROUP BY xcs, date, tag
+--     DISTRIBUTE BY xcs;
