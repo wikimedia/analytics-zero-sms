@@ -73,30 +73,3 @@ INSERT OVERWRITE TABLE yurik.zero_webstats
     ) prepared
     GROUP BY xcs, via, ipset, https, lang, subdomain, site
     DISTRIBUTE BY printf('%d-%02d-%02d', ${year}, ${month}, ${day});
-
-
--- CREATE TABLE IF NOT EXISTS yurik.zero_webstats_sum (
---   date string,
---   tag string,
---   count bigint)
--- PARTITIONED BY (
---   xcs string)
--- ROW FORMAT DELIMITED
---   FIELDS TERMINATED BY '\t';
-
---   xcs string,
---   via string,
---   ipset string,
---   https string,
---   lang string,
---   subdomain string,
---   site string,
---   count bigint)
-
--- INSERT OVERWRITE TABLE yurik.zero_webstats_sum
---     PARTITION(xcs)
---     SELECT
---         date, tag, COUNT(*) count, xcs
---     FROM yurik.zero_webstats
---     GROUP BY xcs, date, tag
---     DISTRIBUTE BY xcs;
