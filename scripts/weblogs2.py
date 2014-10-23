@@ -2,6 +2,7 @@
 import StringIO
 import re
 import collections
+
 from pandas import read_table, pivot_table
 from pandas.core.frame import DataFrame, Series
 import numpy as np
@@ -36,7 +37,7 @@ class WebLogProcessor2(LogProcessor):
         if self.settings.pathCacheLegacy:
             self.pathCacheLegacy = self.normalizePath(self.settings.pathCacheLegacy)
         else:
-            self.pathCacheLegacy = self.settings.pathCacheLegacy
+            self.pathCacheLegacy = False
 
         self.legacyFileRe = re.compile(r'^(zero\.tsv\.log-(\d+)\.gz)__\d+\.tsv$', re.IGNORECASE)
 
@@ -86,6 +87,8 @@ class WebLogProcessor2(LogProcessor):
                     else:
                         raise ValueError('Unrecognized key (%s) in file %s' % (joinValues(vals), f))
                 (dt, typ, xcs, via, ipset, https, lang, subdomain, site, count) = vals
+
+                via = via.upper()
 
                 error = False
                 if xcs == '404-01b':
@@ -151,7 +154,8 @@ class WebLogProcessor2(LogProcessor):
                     # 0      1      2       3    4  5    6         7
                     # 250-99 DIRECT default http ru zero wikipedia 1000
                     (xcs, via, ipset, https, lang, subdomain, site, count) = vals
-                    via = via if via else u'DIRECT'
+
+                    via = via.upper() if via else u'DIRECT'
                     ipset = ipset if ipset else u'default'
                     https = https if https else u'http'
 
@@ -195,9 +199,9 @@ class WebLogProcessor2(LogProcessor):
 
         if legacyStats:
             # Only add legacy data for dates that we haven't seen in hadoop
-            knownDates = set([k[0] for k in stats.keys()])
+            earliest = min([k[0] for k in stats.keys()])
             for k, v in legacyStats.iteritems():
-                if k[0] not in knownDates:
+                if k[0] < earliest:
                     stats[k] = v
 
         stats = [list(k) + [v] for k, v in stats.iteritems()]
@@ -233,7 +237,9 @@ class WebLogProcessor2(LogProcessor):
             token=wiki.token()
         )
 
-        for id in list(df.xcs.unique()):
+        xcsList = list(df.xcs.unique())
+        xcsList.sort()
+        for id in xcsList:
             xcsDf = df[df.xcs == id]
 
             # create an artificial yes/opera value
@@ -287,10 +293,10 @@ class WebLogProcessor2(LogProcessor):
 
     def run(self):
         stats = self.combineStats(self.combineStatsLegacy())
-        # self.generateGraphData(stats)
+        self.generateGraphData(stats)
 
     def manualRun(self):
-        stats = self.combineStats(self.combineStatsLegacy())
+        stats = self.combineStats()
         # self.generateGraphData(stats)
 
 

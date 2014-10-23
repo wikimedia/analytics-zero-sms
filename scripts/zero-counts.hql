@@ -16,7 +16,7 @@ SET hive.exec.compress.output=false;
 use yurik;
 
 
-CREATE TABLE IF NOT EXISTS yurik.zero_webstats (
+CREATE TABLE IF NOT EXISTS zero_webstats (
   xcs string,
   via string,
   ipset string,
@@ -31,7 +31,10 @@ ROW FORMAT DELIMITED
   FIELDS TERMINATED BY '\t';
 
 
-INSERT OVERWRITE TABLE yurik.zero_webstats
+-- ALTER TABLE zero_webstats DROP IF EXISTS PARTITION(date < '${date}')
+
+
+INSERT OVERWRITE TABLE zero_webstats
     PARTITION(date="${date}") IF NOT EXISTS
     SELECT
         xcs, via, ipset, https, lang, subdomain, site, COUNT(*) count
