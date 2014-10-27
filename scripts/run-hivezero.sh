@@ -1,13 +1,14 @@
 #!/bin/bash
+# ./run-clone.sh 515-05 2014 10 11 0 23
 
-if [[ -z "$4" ]]; then
-	last=$3
+if [[ -z "$6" ]]; then
+	last=$5
 else
-	last=$4
+	last=$6
 fi
 
-for ((day = $3; day <= $last; day++)); do
-	printf -v p "%04d-%02d-%02d" $1 $2 $day
-	echo hive -f zero-counts.hql -d "year="$1 -d "month="$2 -d "day="$day -d "date="$p
-	export HADOOP_HEAPSIZE=1024 && hive -f zero-counts.hql -d "year="$1 -d "month="$2 -d "day="$day -d "date="$p
+for ((hour = $5; hour <= $last; hour++)); do
+	printf -v t "tmp_%04d_%02d_%02d_%02d" $2 $3 $4 $hour
+	echo hive -f clone-xcs.hql -d "xcs="$1 -d "year="$2 -d "month="$3 -d "day="$4 -d "hour="$hour -d "table="$t
+	export HADOOP_HEAPSIZE=1024 && hive -f clone-xcs.hql -d "xcs="$1 -d "year="$2 -d "month="$3 -d "day="$4 -d "hour="$hour -d "table="$t
 done
