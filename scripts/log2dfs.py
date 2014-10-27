@@ -68,12 +68,12 @@ httpStatuses = {
 
 
 class LogConverter(LogProcessor):
-    def __init__(self, settingsFile='settings/log2dfs.json', logDatePattern=False):
+    def __init__(self, filePattern=False, settingsFile='settings/log2dfs.json'):
         super(LogConverter, self).__init__(settingsFile, 'w2h')
 
-        if not logDatePattern:
-            logDatePattern = r'\d\d\d\d\d\d\d\d'
-        self.logFileRe = re.compile(unicode(logDatePattern), re.IGNORECASE)
+        if not filePattern:
+            filePattern = r'\d\d\d\d\d\d\d\d'
+        self.logFileRe = re.compile(unicode(filePattern), re.IGNORECASE)
         self.dateRe = re.compile(r'(201\d-\d\d-\d\dT\d\d):\d\d:\d\d(\.\d+)?')
         self.urlRe = re.compile(r'^(https?)://([^/]+)([^?#]*)(.*)', re.IGNORECASE)
 
@@ -82,7 +82,7 @@ class LogConverter(LogProcessor):
         safePrint('Processing log files')
         for f in os.listdir(self.pathLogs):
 
-            if not self.logFileRe.match(f):
+            if not self.logFileRe.search(f):
                 continue
             logFile = os.path.join(self.pathLogs, f)
             statFile = os.path.join(self.pathCache, f)
@@ -235,5 +235,5 @@ class LogConverter(LogProcessor):
 
 
 if __name__ == '__main__':
-    # LogConverter(logDatePattern=(sys.argv[1] if len(sys.argv) > 1 else False)).manualRun()
-    LogConverter(logDatePattern=(sys.argv[1] if len(sys.argv) > 1 else False)).safeRun()
+    # LogConverter(filePattern=(sys.argv[1] if len(sys.argv) > 1 else False)).manualRun()
+    LogConverter(filePattern=(sys.argv[1] if len(sys.argv) > 1 else False)).safeRun()

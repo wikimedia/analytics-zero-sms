@@ -125,6 +125,8 @@ class ScriptProcessor(object):
             self.onSettingsLoaded()
 
     def normalizePath(self, path, relToSettings=True):
+        if not path:
+            return False
         if not os.path.isabs(path) and relToSettings:
             path = os.path.join(os.path.dirname(self.settingsFile), path)
         path = os.path.abspath(os.path.normpath(path))
