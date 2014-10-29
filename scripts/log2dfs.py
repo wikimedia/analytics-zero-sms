@@ -61,7 +61,7 @@ httpStatuses = {
     'FAKE_CACHE_STATUS': '',
     'TCP_HIT': 'hit',
     'TCP_IMS_HIT': 'hit',
-    'TCP_DENIED': '',
+    'TCP_DENIED': 'denied',
     'TCP_REFRESH_MISS': 'miss',
     'TCP_NEGATIVE_HIT': 'hit',
 }
@@ -76,6 +76,7 @@ class LogConverter(LogProcessor):
         self.logFileRe = re.compile(unicode(filePattern), re.IGNORECASE)
         self.dateRe = re.compile(r'(201\d-\d\d-\d\dT\d\d):\d\d:\d\d(\.\d+)?')
         self.urlRe = re.compile(r'^(https?)://([^/]+)([^?#]*)(.*)', re.IGNORECASE)
+        self.xcsRe = re.compile(r'^[0-9]+-[0-9]+$', re.IGNORECASE)
 
     def processLogFiles(self):
 
@@ -89,8 +90,7 @@ class LogConverter(LogProcessor):
             if statFile.endswith('.gz'):
                 statFile = statFile[:-3]
 
-            # if not os.path.exists(statFile):
-            if True:
+            if not os.path.exists(statFile):
                 self.processLogFile(logFile, statFile)
 
     def processLogFile(self, logFile, statFile):
@@ -133,26 +133,26 @@ class LogConverter(LogProcessor):
         else:
             streamData = io.open(logFile, 'r', encoding='utf8', errors='ignore')
 
-        with io.open(statFile, 'w', encoding='utf8') as out:
+        tmpFile = statFile + '.tmp'
+        with io.open(tmpFile, 'w', encoding='utf8') as out:
             for line in streamData:
                 count += 1
                 if count % 1000000 == 0:
                     safePrint('%d lines processed' % count)
 
-                strip = line.strip('\n\r')
+                strip = line.strip('\n\r\x00')
                 if isTab:
                     l = strip.split('\t')
-                    if l[2].startswith('201'):
+                    if len(l) > 2 and l[2].startswith('201'):
                         while len(l) > 16:
                             l[13] += ' ' + l[14]
                             del l[11]
                 else:
                     l = strip.split(' ')
                     # fix text/html; charset=UTF-8 into one field
-                    while len(l) >= 10 and l[10].endswith(';') and l[11] != '-' and not l[11].startswith('http'):
+                    while len(l) > 11 and l[10].endswith(';') and l[11] != '-' and not l[11].startswith('http'):
                         l[10] += ' ' + l[11]
                         del l[11]
-                    l[13] = unquote(l[13])
                     if len(l) == 14:
                         l.append(u'')
                         l.append(u'')
@@ -162,12 +162,14 @@ class LogConverter(LogProcessor):
                     safePrint(u'Wrong parts count - %d parts\n%s' % (partsCount, line))
                     continue
 
-                l = ['' if v == '-' else v for v in l]
+                l = ['' if v == '-' else v.replace('\t', ' ') for v in l]
                 (hostname, sequence, dt, time_firstbyte, ip, status, response_size, http_method, uri, unknown1,
                  content_type, referer, x_forwarded_for, user_agent, accept_language, x_analytics) = l
                 # status -> cache_status, http_status
                 # uri -> uri_host, uri_path, uri_query
                 # new:  webrequest_source, year, month, day, hour
+
+                user_agent = unquote(user_agent).replace('\t', ' ')
 
                 m = self.dateRe.match(dt)
                 if not m:
@@ -180,6 +182,9 @@ class LogConverter(LogProcessor):
                     month = unicode(d.month)
                     day = unicode(d.day)
                     hour = unicode(d.hour)
+
+                if self.xcsRe.match(x_analytics):
+                    x_analytics = 'zero=' + x_analytics
 
                 if 'zero=' not in x_analytics:
                     if defaultXcs:
@@ -207,25 +212,34 @@ class LogConverter(LogProcessor):
                     continue
                 cache_status = httpStatuses[cache_status]
 
-                m = self.urlRe.match(uri)
-                if not m:
-                    safePrint(u'URL parsing failed: "%s"\n%s' % (uri, line))
-                    continue
-                if m.group(1).lower() == u'https' and u'https=' not in x_analytics:
-                    x_analytics += u'https=1'
-                uri_host = m.group(2)
-                if uri_host.endswith(':80'):
-                    uri_host = uri_host[:-3]
-                if uri_host.endswith('.'):
-                    uri_host = uri_host[:-1]
-                uri_path = m.group(3)
-                uri_query = m.group(4)
+                if uri == 'NONE://' or (http_method == 'CONNECT' and uri == ':0'):
+                    uri_host = uri_path = uri_query = ''
+
+                else:
+                    m = self.urlRe.match(uri)
+                    if not m:
+                        safePrint(u'URL parsing failed: "%s"\n%s' % (uri, line))
+                        continue
+                    if m.group(1).lower() == u'https' and u'https=' not in x_analytics:
+                        x_analytics += u'https=1'
+                    uri_host = m.group(2)
+                    if uri_host.endswith(':80'):
+                        uri_host = uri_host[:-3]
+                    if uri_host.endswith('.'):
+                        uri_host = uri_host[:-1]
+                    uri_path = m.group(3)
+                    uri_query = m.group(4)
 
                 result = '\t'.join(
                     [hostname, sequence, dt, time_firstbyte, ip, cache_status, http_status, response_size, http_method,
                      uri_host, uri_path, uri_query, content_type, referer, x_forwarded_for, user_agent, accept_language,
                      x_analytics, webrequest_source, year, month, day, hour])
                 out.write(result + '\n')
+
+        if os.path.exists(statFile):
+            os.remove(statFile)
+        os.rename(tmpFile, statFile)
+
 
     def run(self):
         self.processLogFiles()

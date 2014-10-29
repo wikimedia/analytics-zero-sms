@@ -5,9 +5,10 @@ SET hive.exec.compress.output=false;
 -- Extracts zero stats from webrequests into a separate table
 --
 -- Usage:
---     hive -f zero-counts.hql -d year=2014 -d month=9 -d day=15 -d date=2014-09-15
+--     hive -f zero-counts.hql -d table=wmf_raw.webrequest -d year=2014 -d month=9 -d day=15 -d date=2014-09-15
 --     Date is duplicated because I haven't figured an easy way to set date=printf()
 --
+-- set hivevar:table=wmf_raw.webrequest
 -- set hivevar:year=2014;
 -- set hivevar:month=10;
 -- set hivevar:day=21;
@@ -48,7 +49,7 @@ INSERT OVERWRITE TABLE zero_webstats
             regexp_extract(uri_host, '^([A-Za-z0-9-]+)(\\.(zero|m))?\\.([a-z]*)\\.org$', 3) subdomain,
             regexp_extract(uri_host, '^([A-Za-z0-9-]+)(\\.(zero|m))?\\.([a-z]*)\\.org$', 4) site
 
-        FROM wmf_raw.webrequest
+        FROM ${table}
         WHERE
             webrequest_source IN ('text', 'mobile')
             AND year=${year}
