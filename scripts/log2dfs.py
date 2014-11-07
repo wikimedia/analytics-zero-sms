@@ -221,7 +221,7 @@ class LogConverter(LogProcessor):
                         safePrint(u'URL parsing failed: "%s"\n%s' % (uri, line))
                         continue
                     if m.group(1).lower() == u'https' and u'https=' not in x_analytics:
-                        x_analytics += u'https=1'
+                        x_analytics += u';https=1'
                     uri_host = m.group(2)
                     if uri_host.endswith(':80'):
                         uri_host = uri_host[:-3]

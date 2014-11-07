@@ -41,6 +41,16 @@ class WebLogProcessor(LogProcessor):
         self.duplUrlRe = re.compile(r'^(https?://.+)\1', re.IGNORECASE)
         self.zcmdRe = re.compile(r'zcmd=([-a-z0-9]+)', re.IGNORECASE)
         self.combinedFile = os.path.join(self.pathCache, 'combined-all.tsv')
+        if not self.settings.pathGraphs:
+            raise ValueError('Graph paths is not set, check %s' % settingsFile)
+        self.pathGraphs = self.normalizePath(self.settings.pathGraphs)
+
+    def defaultSettings(self, suffix):
+        s = super(WebLogProcessor, self).defaultSettings(suffix)
+        if suffix:
+            suffix = suffix.strip('/\\')
+        s.pathGraphs = 'graphs' + os.sep + suffix if suffix else ''
+        return s
 
     def downloadConfigs(self):
         wiki = self.getWiki()

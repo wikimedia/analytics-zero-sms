@@ -6,6 +6,7 @@ SET hive.exec.compress.output=false;
 --
 -- Usage:
 --     hive -f zero-counts.hql -d table=wmf_raw.webrequest -d year=2014 -d month=9 -d day=15 -d date=2014-09-15
+--     hive -f zero-counts.hql -d table=webreq_archive     -d year=2013 -d month=9 -d day=15 -d date=2013-09-15
 --     Date is duplicated because I haven't figured an easy way to set date=printf()
 --
 -- set hivevar:table=wmf_raw.webrequest
@@ -41,13 +42,13 @@ INSERT OVERWRITE TABLE zero_webstats
         xcs, via, ipset, https, lang, subdomain, site, COUNT(*) count
     FROM (
         SELECT
-            regexp_extract(x_analytics, 'zero=([^\;]+)') xcs,
-            regexp_extract(x_analytics, 'proxy=([^\;]+)') via,
-            regexp_extract(x_analytics, 'zeronet=([^\;]+)') ipset,
+            COALESCE(regexp_extract(x_analytics, 'zero=([^\;]+)'), '') xcs,
+            COALESCE(regexp_extract(x_analytics, 'proxy=([^\;]+)'), '') via,
+            COALESCE(regexp_extract(x_analytics, 'zeronet=([^\;]+)'), '') ipset,
             if (x_analytics LIKE '%https=1%', 'https', '') https,
-            regexp_extract(uri_host, '^([A-Za-z0-9-]+)(\\.(zero|m))?\\.([a-z]*)\\.org$', 1) lang,
-            regexp_extract(uri_host, '^([A-Za-z0-9-]+)(\\.(zero|m))?\\.([a-z]*)\\.org$', 3) subdomain,
-            regexp_extract(uri_host, '^([A-Za-z0-9-]+)(\\.(zero|m))?\\.([a-z]*)\\.org$', 4) site
+            COALESCE(regexp_extract(uri_host, '^([A-Za-z0-9-]+)(\\.(zero|m))?\\.([a-z]*)\\.org$', 1), '') lang,
+            COALESCE(regexp_extract(uri_host, '^([A-Za-z0-9-]+)(\\.(zero|m))?\\.([a-z]*)\\.org$', 3), '') subdomain,
+            COALESCE(regexp_extract(uri_host, '^([A-Za-z0-9-]+)(\\.(zero|m))?\\.([a-z]*)\\.org$', 4), '') site
 
         FROM ${table}
         WHERE

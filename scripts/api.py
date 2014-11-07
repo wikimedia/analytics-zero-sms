@@ -86,6 +86,7 @@ class Site(object):
     """
 
     def __init__(self, url, headers=None, session=None, log=None):
+        self._loginOnDemand = False
         self.session = session if session else requests.session()
         self.log = log if log else ConsoleLog()
         self.url = url
@@ -143,6 +144,9 @@ class Site(object):
         else:
             request_kw['params'] = kwargs
 
+        if self._loginOnDemand and action != 'login':
+            self.login(self._loginOnDemand[0], self._loginOnDemand[1])
+
         data = parseJson(self.request(method, forceSSL=forceSSL, **request_kw))
 
         # Handle success and failure
@@ -152,13 +156,23 @@ class Site(object):
             self.log(2, data['warnings'])
         return data
 
-    def login(self, user, password):
+    def login(self, user, password, onDemand=False):
+        """
+        :param user:
+        :param password:
+        :param onDemand: if True, will postpone login until an actual API request is made
+        :return:
+        """
+        if onDemand:
+            self._loginOnDemand = (user, password)
+            return
         self.tokens = {}
         res = self('login', lgname=user, lgpassword=password)['login']
         if res['result'] == 'NeedToken':
             res = self('login', lgname=user, lgpassword=password, lgtoken=res['token'])['login']
         if res['result'] != 'Success':
             raise ApiError('Login failed', res)
+        self._loginOnDemand = False
 
     def query(self, **kwargs):
         """

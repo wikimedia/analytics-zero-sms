@@ -188,7 +188,7 @@ class ScriptProcessor(object):
             self._wiki = api.wikimedia('zero', 'wikimedia', 'https')
             if self.proxy:
                 self._wiki.session.proxies = {'http': 'http://%s:%d' % (self.proxy, self.proxyPort)}
-            self._wiki.login(self.settings.apiUsername, self.settings.apiPassword)
+            self._wiki.login(self.settings.apiUsername, self.settings.apiPassword, onDemand=True)
         return self._wiki
 
     # noinspection PyMethodMayBeStatic
@@ -217,12 +217,11 @@ class LogProcessor(ScriptProcessor):
     def __init__(self, settingsFile, pathSuffix):
         super(LogProcessor, self).__init__(settingsFile, pathSuffix)
 
-        if not self.settings.pathLogs or not self.settings.pathCache or not self.settings.pathGraphs:
+        if not self.settings.pathLogs or not self.settings.pathCache:
             raise ValueError('One of the paths is not set, check %s' % settingsFile)
 
         self.pathLogs = self.normalizePath(self.settings.pathLogs)
         self.pathCache = self.normalizePath(self.settings.pathCache)
-        self.pathGraphs = self.normalizePath(self.settings.pathGraphs)
 
     def defaultSettings(self, suffix):
         s = super(LogProcessor, self).defaultSettings(suffix)
@@ -231,5 +230,4 @@ class LogProcessor(ScriptProcessor):
         suffix = os.sep + suffix if suffix else ''
         s.pathLogs = 'logs' + suffix
         s.pathCache = 'cache' + suffix
-        s.pathGraphs = 'graphs' + suffix
         return s

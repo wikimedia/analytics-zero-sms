@@ -68,6 +68,9 @@ class SmsLogProcessor(LogProcessor):
 
         # wikipedia_application_3.log.2014-06-11
         self.fileRe = re.compile(r'^wikipedia_application_\d+\.log\.(?P<date>\d{4}-\d{2}-\d{2})$', re.IGNORECASE)
+        if not self.settings.pathGraphs:
+            raise ValueError('Graph paths is not set, check %s' % settingsFile)
+        self.pathGraphs = self.normalizePath(self.settings.pathGraphs)
 
     def defaultSettings(self, suffix):
         s = super(SmsLogProcessor, self).defaultSettings(suffix)
@@ -86,6 +89,9 @@ class SmsLogProcessor(LogProcessor):
         s.processOverlapDays = 1
         s.salt = generatePassword()
         s.sortCmd = 'sort'
+        if suffix:
+            suffix = suffix.strip('/\\')
+        s.pathGraphs = 'graphs' + os.sep + suffix if suffix else ''
         return s
 
     def onSavingSettings(self):

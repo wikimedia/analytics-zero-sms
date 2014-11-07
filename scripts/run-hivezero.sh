@@ -1,16 +1,63 @@
 #!/bin/bash
 
-#                $1                 $2     $3   $4 $5 %6 $7
-# ./run-clone.sh wmf_raw.webrequest 515-05 2014 10 11 0  23
+#                   $1                 $2   $3 $4 %5 $6
+# ./run-hivezero.sh wmf_raw.webrequest 2014 10 1  31
+# ./run-hivezero.sh webreq_archive     2014 10 1  31 overwrite
 
-if [[ -z "$7" ]]; then
-	last=$6
+set -e
+
+if [[ -z "$5" ]]; then
+	last=$4
 else
-	last=$7
+	last=$5
 fi
 
-for ((hour = $6; hour <= $last; hour++)); do
-	printf -v t "tmp_%04d_%02d_%02d_%02d" $3 $4 $5 $hour
-	echo hive -f clone-xcs.hql -d "table="$1 -d "xcs="$2 -d "year="$3 -d "month="$4 -d "day="$5 -d "hour="$hour -d "table="$t
-	export HADOOP_HEAPSIZE=1024 && hive -f clone-xcs.hql -d "xcs="$2 -d "year="$3 -d "month="$4 -d "day="$5 -d "hour="$hour -d "table="$t
+table=$1
+year=$2
+
+if [[ "$3" -eq "all" ]]; then
+	monthFrom=1
+	monthTo=12
+else
+	monthFrom=$3
+	monthTo=$3
+fi
+
+for ((month = $monthFrom; month <= $monthTo; month++)); do
+for ((day = $4; day <= $last; day++)); do
+
+	printf -v date "%04d-%02d-%02d" $year $month $day
+
+	if [ "$( date -d "$date" +%F 2>&1 | grep invalid )" = "" ] ; then
+
+		if [[ "$table" == 'wmf_raw.webrequest' ]]; then
+			path="/mnt/hdfs/wmf/data/raw/webrequest/webrequest_upload/hourly/$year/$month/$day/23"
+		else
+			path="/mnt/hdfs/user/hive/warehouse/yurik.db/$table/year=$year/month=$month/day=$day"
+		fi
+		if [ ! -d "$path" ]; then
+			echo "***** '$path' does not exists"
+			continue
+		fi
+		pathSize=$(du -sb $path | cut -f1)
+		if (( $pathSize < 50000 )); then
+			echo "***** '$path' is $pathSize bytes -- too small"
+			continue
+		fi
+
+		if [[ "$6" -eq "overwrite" ]]; then
+			hive -e "use yurik; ALTER TABLE zero_webstats DROP IF EXISTS PARTITION(date = '$date');"
+		else
+			path="/mnt/hdfs/user/hive/warehouse/yurik.db/zero_webstats/date="$date
+			echo "***** Checking if '$path' exists"
+			if [ -d $path ]; then
+				continue
+			fi
+		fi
+		echo "*****" hive -f zero-counts.hql -d "table="$table -d "year="$year -d "month="$month -d "day="$day -d "date="$date
+		export HADOOP_HEAPSIZE=2048 && hive -f zero-counts.hql -d "table="$table -d "year="$year -d "month="$month -d "day="$day -d "date="$date
+
+	fi
+
+done
 done
