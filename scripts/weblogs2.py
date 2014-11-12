@@ -4,7 +4,7 @@ import re
 import collections
 
 from pandas import read_table, pivot_table
-from pandas.core.frame import DataFrame, Series
+from pandas.core.frame import DataFrame
 import numpy as np
 
 from logprocessor import *
@@ -58,13 +58,13 @@ class WebLogProcessor2(LogProcessor):
         ignoreViaBefore = datetime(2014, 3, 22)
         configs = self.downloadConfigs()
         stats = collections.defaultdict(int)
-        for dateDir in os.listdir(self.pathCache):
+        for dateDir in os.listdir(self.pathLogs):
             m = self.dateDirRe.match(dateDir)
             if not m:
                 continue
             dateStr = m.group(1)
             dt = datetime.strptime(dateStr, '%Y-%m-%d')
-            datePath = os.path.join(self.pathCache, dateDir)
+            datePath = os.path.join(self.pathLogs, dateDir)
             for f in os.listdir(datePath):
                 if not self.fileRe.match(f):
                     continue
@@ -136,90 +136,56 @@ class WebLogProcessor2(LogProcessor):
         xcsList = [xcs for xcs in allData.xcs.unique() if xcs != 'ERROR' and xcs[0:4] != 'TEST']
 
         # filter type==DATA and site==wikipedia
-        allData = allData[(allData['xcs'].isin(xcsList)) & (allData['site'] == 'wikipedia')]
-        # filter out last date
-        lastDate = allData.date.max()
-        df = allData[allData.date < lastDate]
+        df = allData[(allData['xcs'].isin(xcsList)) & (allData['site'] == 'wikipedia')]
 
-        allowedSubdomains = ['m', 'zero']
-        limnCompat = df[(df.ison == 'y') & (df.iszero == 'y') & (df.subdomain.isin(allowedSubdomains))]
         s = StringIO.StringIO()
-        pivot_table(limnCompat, 'count', ['date', 'xcs', 'subdomain'], aggfunc=np.sum).to_csv(s, header=True)
-        result = s.getvalue()
+        allowedSubdomains = ['m', 'zero']
+        dailySubdomains = df[(df.ison == 'y') & (df.iszero == 'y') & (df.subdomain.isin(allowedSubdomains))]
+        pivot_table(dailySubdomains, 'count', ['date', 'xcs', 'subdomain'], aggfunc=np.sum).to_csv(s, header=False)
 
         wiki(
             'edit',
             title='RawData:DailySubdomains',
             summary='refreshing data',
-            text=result,
+            text='date,xcs,subdomain,count\n' + s.getvalue(),
             token=wiki.token()
         )
-        # allEnabled = df[(df.ison == 'y') & (df.iszero == 'y')]
-        # s = StringIO.StringIO()
-        # pivot_table(allEnabled, 'count', ['date', 'xcs'], aggfunc=np.sum).to_csv(s, header=True)
-        # result = s.getvalue()
-        #
-        # wiki(
-        #     'edit',
-        #     title='RawData:AllEnabled',
-        #     summary='refreshing data',
-        #     text=result,
-        #     token=wiki.token()
-        # )
-        return
-        xcsList = list(df.xcs.unique())
-        xcsList.sort()
-        for id in xcsList:
-            xcsDf = df[df.xcs == id]
 
-            # create an artificial yes/opera value
-            opera = xcsDf[(xcsDf.via == 'OPERA') & (xcsDf.iszero == 'yes')]
-            opera['str'] = 'zero-opera'
+        # create an artificial yes/no/opera sums
+        opera = df[(df.via == 'OPERA') & (df.iszero == 'y')]
+        opera['str'] = 'o'
+        yes = df[df.iszero == 'y']
+        yes['str'] = 'y'
+        no = df[df.iszero == 'n']
+        no['str'] = 'n'
+        combined = opera.append(yes).append(no)
+        s = StringIO.StringIO()
+        pivot_table(combined, 'count', ['date', 'xcs', 'str'], aggfunc=np.sum).to_csv(s, header=False)
 
-            yes = xcsDf[xcsDf.iszero == 'yes']
-            yes['str'] = 'zero-all'
+        wiki(
+            'edit',
+            title='RawData:DailyTotals',
+            summary='refreshing data',
+            text='date,xcs,iszero,count\n' + s.getvalue(),
+            token=wiki.token()
+        )
 
-            no = xcsDf[xcsDf.iszero == 'no']
-            no['str'] = 'non-zero'
-
-            combined = opera.append(yes).append(no)
-
-            s = StringIO.StringIO()
-            pivot_table(combined, 'count', ['date', 'str'], aggfunc=np.sum).to_csv(s, header=False)
-            result = 'date,iszero,count\n' + s.getvalue()
-
-            wiki(
-                'edit',
-                title='RawData:' + id,
-                summary='refreshing data',
-                text=result,
-                token=wiki.token()
-            )
-
-            byLang = pivot_table(xcsDf, 'count', ['lang'], aggfunc=np.sum).order('count', ascending=False)
+        results = ['lang,xcs,count']
+        for id in list(df.xcs.unique()):
+            byLang = pivot_table(df[df.xcs == id], 'count', ['lang'], aggfunc=np.sum).order('count', ascending=False)
             top = byLang.head(5)
-            other = byLang.sum() - top.sum()
-            s = StringIO.StringIO()
-            Series.to_csv(top, s)
-            result = 'lang,count\n' + s.getvalue() + ('other,%d\n' % other)
+            vals = list(top.iteritems())
+            vals.append(('other', byLang.sum() - top.sum()))
+            valsTotal = sum([v[1] for v in vals]) / 100.0
+            results.extend(['%s,%s,%.1f' % (l, id, c / valsTotal) for l, c in vals])
 
-            wiki(
-                'edit',
-                title='RawData:' + id + '-langTotal',
-                summary='refreshing data',
-                text=result,
-                token=wiki.token()
-            )
-
-            # return df
-            # pt = pivot_table(df, values='count', index=['date'], columns=['xcs','subdomain'], aggfunc=np.sum).head(10)
-            # writeData(os.path.join(self.pathCache, 'combined-errors.tsv'),
-            # ifilter(lambda v: v[1] == 'ERR', stats),
-            # columnHeaders11)
-            # writeData(os.path.join(self.pathCache, 'combined-stats.tsv'),
-            # ifilter(lambda v: v[1] == 'STAT', stats), columnHeaders11)
-            # writeData(os.path.join(self.pathCache, 'combined-data.tsv'),
-            # ifilter(lambda v: v[1] == 'DATA', stats), columnHeaders11)
+        wiki(
+            'edit',
+            title='RawData:LangPercent',
+            summary='refreshing data',
+            text='\n'.join(results),
+            token=wiki.token()
+        )
 
     def run(self):
         stats = self.combineStats()

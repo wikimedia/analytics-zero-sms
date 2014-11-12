@@ -31,7 +31,7 @@ for ((day = $4; day <= $last; day++)); do
 	if [ "$( date -d "$date" +%F 2>&1 | grep invalid )" = "" ] ; then
 
 		if [[ "$table" == 'wmf_raw.webrequest' ]]; then
-			path="/mnt/hdfs/wmf/data/raw/webrequest/webrequest_upload/hourly/$year/$month/$day/23"
+			path="/mnt/hdfs/wmf/data/raw/webrequest/webrequest_upload/hourly/$year/$(printf "%02d" $month)/$(printf "%02d" $day)/23"
 		else
 			path="/mnt/hdfs/user/hive/warehouse/yurik.db/$table/year=$year/month=$month/day=$day"
 		fi
@@ -45,12 +45,14 @@ for ((day = $4; day <= $last; day++)); do
 			continue
 		fi
 
-		if [[ "$6" -eq "overwrite" ]]; then
-			hive -e "use yurik; ALTER TABLE zero_webstats DROP IF EXISTS PARTITION(date = '$date');"
-		else
-			path="/mnt/hdfs/user/hive/warehouse/yurik.db/zero_webstats/date="$date
-			echo "***** Checking if '$path' exists"
-			if [ -d $path ]; then
+		path="/mnt/hdfs/user/hive/warehouse/yurik.db/zero_webstats/date="$date
+		echo "***** Checking if '$path' exists"
+		if [ -d $path ]; then
+			if [ "$6" == "overwrite" ]; then
+				echo "***** Droping partition '$date'"
+				hive -e "use yurik; ALTER TABLE zero_webstats DROP IF EXISTS PARTITION(date = '$date');"
+			else
+				echo "***** Skipping '$date'"
 				continue
 			fi
 		fi
