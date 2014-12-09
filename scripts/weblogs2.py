@@ -3,9 +3,10 @@ import StringIO
 import re
 import collections
 
-from pandas import read_table, pivot_table
+from pandas import read_table, pivot_table, Series
 from pandas.core.frame import DataFrame
 import numpy as np
+from calendar import monthrange
 
 from logprocessor import *
 
@@ -21,6 +22,11 @@ def addStat(stats, date, dataType, xcs, via, ipset, https, lang, subdomain, site
 
 columnHdrCache = u'xcs,via,ipset,https,lang,subdomain,site,count'.split(',')
 columnHdrResult = u'date,xcs,via,ipset,https,lang,subdomain,site,iszero,ison,count'.split(',')
+
+
+def toYearMonth(dateStr):
+    parts = dateStr.split('-')
+    return parts[0] + '-' + parts[1] + '-01'
 
 
 class WebLogProcessor2(LogProcessor):
@@ -123,6 +129,47 @@ class WebLogProcessor2(LogProcessor):
         writeData(self.combinedFile, stats, columnHdrResult)
         return stats
 
+    def createMonthlyData(self, totals, pivotFields, headerFields, wikiTitle):
+        """
+        Convert daily totals to monthly totals
+        :param totals:
+        :param pivotFields:
+        :param headerFields:
+        :param wikiTitle:
+        :return:
+        """
+        monthly = totals.reset_index()
+        # remove last month if there are less than 10 days in it
+        dates = monthly['date'].unique()
+        lastMonth = dates.max().split('-')
+        lastMonth = lastMonth[0] + '-' + lastMonth[1] + '-00'
+        daysInLastMonth = dates[dates > lastMonth].size
+        if daysInLastMonth < 10:
+            monthly = monthly[monthly.date < lastMonth]
+        monthly['date'] = map(toYearMonth, monthly['date'])
+        monthlyTotals = pivot_table(monthly, 'count', pivotFields, aggfunc=np.sum)
+        res = {}
+        for k, v in monthlyTotals.to_dict().iteritems():
+            count = v
+            if k[0] < lastMonth:
+                parts = k[0].split('-')
+                dayCount = monthrange(int(parts[0]), int(parts[1]))[1]
+            else:
+                dayCount = daysInLastMonth
+            res[k] = int(count * 30.0 / dayCount)
+
+        s = StringIO.StringIO()
+        Series(res).to_csv(s, header=False)
+
+        wiki = self.getWiki()
+        wiki(
+            'edit',
+            title=wikiTitle,
+            summary='refreshing data',
+            text=headerFields + '\n' + s.getvalue(),
+            token=wiki.token()
+        )
+
     def generateGraphData(self, stats=None):
         safePrint('Generating and uploading data files')
 
@@ -138,19 +185,27 @@ class WebLogProcessor2(LogProcessor):
         # filter type==DATA and site==wikipedia
         df = allData[(allData['xcs'].isin(xcsList)) & (allData['site'] == 'wikipedia')]
 
+        pivotFields = ['date', 'xcs', 'subdomain']
+        headerFields = 'date,xcs,subdomain,count'
+
         s = StringIO.StringIO()
         allowedSubdomains = ['m', 'zero']
         dailySubdomains = df[(df.ison == 'y') & (df.iszero == 'y') & (df.subdomain.isin(allowedSubdomains))]
-        pivot_table(dailySubdomains, 'count', ['date', 'xcs', 'subdomain'], aggfunc=np.sum).to_csv(s, header=False)
+        totals = pivot_table(dailySubdomains, 'count', pivotFields, aggfunc=np.sum)
+        totals.to_csv(s, header=False)
 
         wiki(
             'edit',
             title='RawData:DailySubdomains',
             summary='refreshing data',
-            text='date,xcs,subdomain,count\n' + s.getvalue(),
+            text=headerFields + '\n' + s.getvalue(),
             token=wiki.token()
         )
 
+        self.createMonthlyData(totals, pivotFields, headerFields, 'RawData:MonthlySubdomains')
+
+        pivotFields = ['date', 'xcs', 'str']
+        headerFields = 'date,xcs,iszero,count'
         # create an artificial yes/no/opera sums
         opera = df[(df.via == 'OPERA') & (df.iszero == 'y')]
         opera['str'] = 'o'
@@ -160,24 +215,26 @@ class WebLogProcessor2(LogProcessor):
         no['str'] = 'n'
         combined = opera.append(yes).append(no)
         s = StringIO.StringIO()
-        pivot_table(combined, 'count', ['date', 'xcs', 'str'], aggfunc=np.sum).to_csv(s, header=False)
-
+        totals = pivot_table(combined, 'count', pivotFields, aggfunc=np.sum)
+        totals.to_csv(s, header=False)
         wiki(
             'edit',
             title='RawData:DailyTotals',
             summary='refreshing data',
-            text='date,xcs,iszero,count\n' + s.getvalue(),
+            text=headerFields + '\n' + s.getvalue(),
             token=wiki.token()
         )
 
+        self.createMonthlyData(totals, pivotFields, headerFields, 'RawData:MonthlyTotals')
+
         results = ['lang,xcs,count']
-        for id in list(df.xcs.unique()):
-            byLang = pivot_table(df[df.xcs == id], 'count', ['lang'], aggfunc=np.sum).order('count', ascending=False)
+        for xcsId in list(df.xcs.unique()):
+            byLang = pivot_table(df[df.xcs == xcsId], 'count', ['lang'], aggfunc=np.sum).order('count', ascending=False)
             top = byLang.head(5)
             vals = list(top.iteritems())
             vals.append(('other', byLang.sum() - top.sum()))
             valsTotal = sum([v[1] for v in vals]) / 100.0
-            results.extend(['%s,%s,%.1f' % (l, id, c / valsTotal) for l, c in vals])
+            results.extend(['%s,%s,%.1f' % (l, xcsId, c / valsTotal) for l, c in vals])
 
         wiki(
             'edit',
@@ -198,5 +255,5 @@ class WebLogProcessor2(LogProcessor):
 
 
 if __name__ == '__main__':
-    WebLogProcessor2().manualRun()
-    # WebLogProcessor2().safeRun()
+    # WebLogProcessor2().manualRun()
+    WebLogProcessor2().safeRun()
