@@ -148,7 +148,8 @@ class WebLogProcessor2(LogProcessor):
             monthly = monthly[monthly.date < lastMonth]
         monthly['date'] = map(toYearMonth, monthly['date'])
         monthlyTotals = pivot_table(monthly, 'count', pivotFields, aggfunc=np.sum)
-        res = {}
+
+        lines = [headerFields]
         for k, v in monthlyTotals.to_dict().iteritems():
             count = v
             if k[0] < lastMonth:
@@ -156,17 +157,16 @@ class WebLogProcessor2(LogProcessor):
                 dayCount = monthrange(int(parts[0]), int(parts[1]))[1]
             else:
                 dayCount = daysInLastMonth
-            res[k] = int(count * 30.0 / dayCount)
-
-        s = StringIO.StringIO()
-        Series(res).to_csv(s, header=False)
+            vals = list(k)
+            vals.append(str(int(count * 30.0 / dayCount)))
+            lines.append(','.join(vals))
 
         wiki = self.getWiki()
         wiki(
             'edit',
             title=wikiTitle,
             summary='refreshing data',
-            text=headerFields + '\n' + s.getvalue(),
+            text='\n'.join(lines),
             token=wiki.token()
         )
 
