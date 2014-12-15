@@ -1,0 +1,47 @@
+== mccmnc.py ==
+
+To run mccmnc.py:
+1. Create a settings file settings/mccmny.josn under this directory.
+
+{
+ "apiPassword": "password",
+ "apiUsername": "username"
+}
+
+2. Ensure you have the dependencies defined in mccmnc.py. On a Mac 
+you might use pip2.7 to install them. This runs with Python 2.7. It's
+usually easiest to try running python mccmnc.py and installing as
+needed. On the event logging server the dependencies are as of
+15-Dec-2014 already installed.
+
+3. If necessary, set your PYTHONPATH variable prior to executing:
+
+export PYTHONPATH=/usr/local/lib/python2.7/site-packages
+
+4. Run using the usage defined in mccmnc.py.
+
+python mccmnc.py dbhost dbname mysql_cnf_path YYMMDD[HH...]
+
+To schedule mccmnc.py, on the event logging server:
+
+Add an email address to a file named "email" in your home directory.
+If you want multiple email addresses, add them space separated.
+
+Create a file mccmnc.sh in your home directory with the following contents:
+
+#! /bin/sh
+
+cd $HOME
+DATE=`date --date="yesterday" "+%Y%m%d"`
+EMAIL=`cat email`
+python mccmnc.py dbhost dbname mysql_cnf_path $DATE | mailx -s "IP Mismatches for $DATE" $EMAIL
+
+
+Then add the following to your crontab with crontab -e:
+
+PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/usr/games:/usr/local/games
+HOME=/home/username
+# once daily:
+15 14 * * * /home/username/mccmnc.sh &> /dev/null
+
+Of course, replace "username" with your username on the event logging server.
