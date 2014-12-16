@@ -1,17 +1,17 @@
 == mccmnc.py ==
 
 To run mccmnc.py:
-1. Create a settings file settings/mccmny.josn under this directory.
+1. Create a settings file settings/mccmnc.json under this directory.
 
 {
  "apiPassword": "password",
  "apiUsername": "username"
 }
 
-2. Ensure you have the dependencies defined in mccmnc.py. On a Mac 
-you might use pip2.7 to install them. This runs with Python 2.7. It's
-usually easiest to try running python mccmnc.py and installing as
-needed. On the event logging server the dependencies are as of
+2. Ensure you have the dependencies defined in the mccmnc.py import.
+You might use pip2.7 to install them. This runs with Python 2.7. It's
+usually easiest to run python mccmnc.py and install packages 
+as needed. On the event logging server the dependencies are as of
 15-Dec-2014 already installed.
 
 3. If necessary, set your PYTHONPATH variable prior to executing:
@@ -37,6 +37,10 @@ EMAIL=`cat email`
 python mccmnc.py dbhost dbname mysql_cnf_path $DATE | mailx -s "IP Mismatches for $DATE" $EMAIL
 
 
+
+chmod 700 the mccmnc.sh file.
+
+
 Then add the following to your crontab with crontab -e:
 
 PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/usr/games:/usr/local/games
@@ -44,4 +48,7 @@ HOME=/home/username
 # once daily:
 15 14 * * * /home/username/mccmnc.sh &> /dev/null
 
-Of course, replace "username" with your username on the event logging server.
+Of course, replace "username" with your username on the event logging
+server. The PATH was just taken from echo $PATH on the actual event
+logging server. crontab needs pathing information in order to reach
+the appropriate commands.
