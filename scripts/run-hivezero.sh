@@ -56,7 +56,7 @@ for ((day = $4; day <= $last; day++)); do
 				continue
 			fi
 		fi
-		echo "*****\n*****\n*****\n*****"
+		echo -e "*****\n*****\n*****\n*****"
 		echo "*****" hive -f zero-counts.hql -d "table="$table -d "year="$year -d "month="$month -d "day="$day -d "date="$date
 		export HADOOP_HEAPSIZE=2048 && hive -f zero-counts.hql -d "table="$table -d "year="$year -d "month="$month -d "day="$day -d "date="$date
 
