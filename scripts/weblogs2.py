@@ -2,11 +2,14 @@
 import StringIO
 import re
 import collections
+import subprocess
+from time import strftime
+from calendar import monthrange
 
+from datetime import timedelta
 from pandas import read_table, pivot_table
 from pandas.core.frame import DataFrame
 import numpy as np
-from calendar import monthrange
 
 from logprocessor import *
 
@@ -29,6 +32,11 @@ def toYearMonth(dateStr):
     return parts[0] + '-' + parts[1] + '-01'
 
 
+def dateRange(start, before):
+    for n in xrange(int((before - start).days)):
+        yield start + timedelta(n)
+
+
 class WebLogProcessor2(LogProcessor):
     def __init__(self, settingsFile='settings/weblogs2.json'):
         super(WebLogProcessor2, self).__init__(settingsFile, 'web2')
@@ -38,6 +46,53 @@ class WebLogProcessor2(LogProcessor):
         self.fileRe = re.compile(r'^\d+')
         self.combinedFile = os.path.join(self.pathCache, 'combined-all.tsv')
         self.allowEdit = True
+
+    def defaultSettings(self, suffix):
+        s = super(WebLogProcessor2, self).defaultSettings(suffix)
+        s.checkAfterTs = False
+        return s
+
+    def onSavingSettings(self):
+        super(WebLogProcessor2, self).onSavingSettings()
+        s = self.settings
+        s.checkAfterTs = self.formatDate(s.checkAfterTs, self.dateFormat)
+
+    def onSettingsLoaded(self):
+        super(WebLogProcessor2, self).onSettingsLoaded()
+        s = self.settings
+        s.checkAfterTs = self.parseDate(s.checkAfterTs, self.dateFormat)
+        if not s.checkAfterTs:
+            s.checkAfterTs = self.parseDate('2015-01-01', self.dateFormat)
+
+    def runHql(self):
+        os.environ["HADOOP_HEAPSIZE"] = "2048"
+
+        for date in dateRange(self.settings.checkAfterTs, datetime.today()):
+            path = '/mnt/hdfs/wmf/data/raw/webrequest/webrequest_upload/hourly/%s/23' \
+                   % strftime("%Y/%m/%d", date.timetuple())
+            if not os.path.exists(path):
+                continue
+            size = sum(os.path.getsize(f) for f in os.listdir(path) if os.path.isfile(f))
+            if size < 50000:
+                print('***** "%s" is %d bytes -- too small' % (path, size))
+                continue
+
+            path = os.path.join(self.settings.pathLogs, 'date=%s' % strftime("%Y-%m-%d", date.timetuple()))
+            if os.path.exists(path):
+                continue
+
+            cmd = ['hive',
+                   '-f', 'zero-counts.hql',
+                   '-S', # --silent
+                   '-d', 'table=wmf_raw.webrequest',
+                   '-d', 'year=' + strftime("%Y", date.timetuple()),
+                   '-d', 'month=' + strftime("%m", date.timetuple()),
+                   '-d', 'day=' + strftime("%d", date.timetuple()),
+                   '-d', 'date=' + strftime("%Y-%m-%d", date.timetuple())]
+
+            ret = subprocess.check_output(cmd, stderr=subprocess.STDOUT)
+            print(ret)
+            self.settings.checkAfterTs = date
 
     def downloadConfigs(self):
         if self._configs:
@@ -167,7 +222,7 @@ class WebLogProcessor2(LogProcessor):
             count = 0
             total = 0
             for i in xrange(len(v)):
-                if v[i] != '' and (i == 0 or v[i-1] != '') and (i == len(v)-1 or v[i+1] != ''):
+                if v[i] != '' and (i == 0 or v[i - 1] != '') and (i == len(v) - 1 or v[i + 1] != ''):
                     total += v[i]
                     count += 1
             if count == 0:
@@ -269,14 +324,16 @@ class WebLogProcessor2(LogProcessor):
             )
 
     def run(self):
+        self.runHql()
         stats = self.combineStats()
         self.generateGraphData(stats)
 
     def manualRun(self):
         self.allowEdit = False
-        stats = False
+        self.runHql()
+        # stats = False
         # stats = self.combineStats()
-        self.generateGraphData(stats)
+        # self.generateGraphData(stats)
 
 
 if __name__ == '__main__':
