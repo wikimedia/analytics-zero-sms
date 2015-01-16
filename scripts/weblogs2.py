@@ -13,23 +13,12 @@ import numpy as np
 
 from logprocessor import *
 
-
-def addStat(stats, date, dataType, xcs, via, ipset, https, lang, subdomain, site):
-    key = (date, dataType, xcs, via, ipset, 'https' if https else 'http', lang, subdomain, site)
-    if key in stats:
-        stats[key] += 1
-    else:
-        datetime.strptime(date, '%Y-%m-%d')  # Validate date - slow operation, do it only once per key
-        stats[key] = 1
-
-
 columnHdrCache = u'xcs,via,ipset,https,lang,subdomain,site,count'.split(',')
 columnHdrResult = u'date,xcs,via,ipset,https,lang,subdomain,site,iszero,ison,count'.split(',')
 
-
-def toYearMonth(dateStr):
-    parts = dateStr.split('-')
-    return parts[0] + '-' + parts[1] + '-01'
+launchedOn = {
+    # '123-45': '2006-03-01',
+}
 
 
 def dateRange(start, before):
@@ -100,11 +89,20 @@ class WebLogProcessor2(LogProcessor):
     def downloadConfigs(self):
         if self._configs:
             return self._configs
+
+        launchedDates = dict([(k,self.parseDate(v, self.dateFormat)) for k,v in launchedOn.iteritems()])
+        # If the very first config value starts on a date between these, treat all data as enabled
+        importStart = self.parseDate('2014-04-01', self.dateFormat)
+        importEnd = self.parseDate('2014-05-01', self.dateFormat)
+        defaultLaunched = self.parseDate('2000-01-01', self.dateFormat)
+
         wiki = self.getWiki()
         # https://zero.wikimedia.org/w/api.php?action=zeroportal&type=analyticsconfig&format=jsonfm
         configs = wiki('zeroportal', type='analyticsconfig').zeroportal
-        for cfs in configs.values():
-            for c in cfs:
+        for xcs, items in configs.iteritems():
+            isFirst = True
+            launched = launchedDates[xcs] if xcs in launchedDates else defaultLaunched
+            for c in items:
                 c.frm = datetime.strptime(c['from'], '%Y-%m-%dT%H:%M:%SZ')
                 if c.before is None:
                     c.before = datetime.max
@@ -115,6 +113,17 @@ class WebLogProcessor2(LogProcessor):
                 c.via = set(c.via)
                 c.ipsets = set(c.ipsets)
                 c.enabled = 'enabled' not in c or c.enabled
+                # configs were created in april 2014, but zero has been running longer than that
+                # adjust configs' starting date if needed
+                if c.enabled:
+                    if c.frm < defaultLaunched:
+                        if c.before < defaultLaunched:
+                            c.enabled = False
+                        else:
+                            c.frm = defaultLaunched
+                    elif isFirst and importStart <= c.frm < importEnd:
+                        c.frm = launched
+                isFirst = False
         self._configs = configs
         return self._configs
 
@@ -160,7 +169,7 @@ class WebLogProcessor2(LogProcessor):
                             sites = conf.sites
                             if conf.enabled and conf.frm <= dt < conf.before:
                                 isEnabled = True
-                                if  (conf.https or https == u'http') and \
+                                if (conf.https or https == u'http') and \
                                         (True == langs or lang in langs) and \
                                         (True == sites or site2 in sites) and \
                                         (dt < ignoreViaBefore or via in conf.via) and \
@@ -216,7 +225,7 @@ class WebLogProcessor2(LogProcessor):
             vals[day] = v
 
             # Create a list, one for each day of the month, True if any key exists for that day
-            key = tuple((date[0] + '-' + date[1] + '-01',) + k[1:-1]) # without the last key part
+            key = tuple((date[0] + '-' + date[1] + '-01',) + k[1:-1])  # without the last key part
             if key in goodDays:
                 vals = goodDays[key]
             else:
