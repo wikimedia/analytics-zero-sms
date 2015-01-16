@@ -72,7 +72,8 @@ class WebLogProcessor2(LogProcessor):
                    % strftime("%Y/%m/%d", date.timetuple())
             if not os.path.exists(path):
                 continue
-            size = sum(os.path.getsize(f) for f in os.listdir(path) if os.path.isfile(f))
+            size = sum(os.path.getsize(os.path.join(path, f)) for f in os.listdir(path) if
+                       os.path.isfile(os.path.join(path, f)))
             if size < 50000:
                 print('***** "%s" is %d bytes -- too small' % (path, size))
                 continue
@@ -83,12 +84,14 @@ class WebLogProcessor2(LogProcessor):
 
             cmd = ['hive',
                    '-f', 'zero-counts.hql',
-                   '-S', # --silent
+                   '-S',  # --silent
                    '-d', 'table=wmf_raw.webrequest',
                    '-d', 'year=' + strftime("%Y", date.timetuple()),
                    '-d', 'month=' + strftime("%m", date.timetuple()),
                    '-d', 'day=' + strftime("%d", date.timetuple()),
                    '-d', 'date=' + strftime("%Y-%m-%d", date.timetuple())]
+
+            print('Running HQl: %s' % ' '.join(cmd))
 
             ret = subprocess.check_output(cmd, stderr=subprocess.STDOUT)
             print(ret)
@@ -102,7 +105,7 @@ class WebLogProcessor2(LogProcessor):
         configs = wiki('zeroportal', type='analyticsconfig').zeroportal
         for cfs in configs.values():
             for c in cfs:
-                c['from'] = datetime.strptime(c['from'], '%Y-%m-%dT%H:%M:%SZ')
+                c.frm = datetime.strptime(c['from'], '%Y-%m-%dT%H:%M:%SZ')
                 if c.before is None:
                     c.before = datetime.max
                 else:
@@ -111,6 +114,7 @@ class WebLogProcessor2(LogProcessor):
                 c.sites = True if True == c.sites else set(c.sites)
                 c.via = set(c.via)
                 c.ipsets = set(c.ipsets)
+                c.enabled = 'enabled' not in c or c.enabled
         self._configs = configs
         return self._configs
 
@@ -154,10 +158,9 @@ class WebLogProcessor2(LogProcessor):
                         for conf in configs[xcs]:
                             langs = conf.languages
                             sites = conf.sites
-                            if conf['from'] <= dt < conf.before:
-                                if 'enabled' not in conf or conf.enabled:
-                                    isEnabled = True
-                                if (conf.https or https == u'http') and \
+                            if conf.enabled and conf.frm <= dt < conf.before:
+                                isEnabled = True
+                                if  (conf.https or https == u'http') and \
                                         (True == langs or lang in langs) and \
                                         (True == sites or site2 in sites) and \
                                         (dt < ignoreViaBefore or via in conf.via) and \
@@ -194,14 +197,14 @@ class WebLogProcessor2(LogProcessor):
         :return:
         """
 
+        # Map of key (month-day,xcs,XXX): [list counts of '', one for each day]
         stats = {}
+        # Short key (month-date,xcs): [list of true/false, one for each day]
+        goodDays = {}
         for k, v in totals.iteritems():
             date = k[0].split('-')
             day = int(date[2]) - 1
-            key = ','.join((date[0] + '-' + date[1] + '-01',) + k[1:])
-            if key.startswith('2014-12-01'):
-                pass
-
+            key = tuple((date[0] + '-' + date[1] + '-01',) + k[1:])
             if key in stats:
                 vals = stats[key]
             else:
@@ -212,13 +215,26 @@ class WebLogProcessor2(LogProcessor):
                 raise IndexError('Duplicate key %s. Existing value %d' % (k, vals[day]))
             vals[day] = v
 
+            # Create a list, one for each day of the month, True if any key exists for that day
+            key = tuple((date[0] + '-' + date[1] + '-01',) + k[1:-1]) # without the last key part
+            if key in goodDays:
+                vals = goodDays[key]
+            else:
+                # new list filled with False, one value for each day in the month
+                vals = [False] * monthrange(int(date[0]), int(date[1]))[1]
+                goodDays[key] = vals
+            vals[day] = True
+
         lines = []
         for k, v in stats.iteritems():
+            # Replace '' with 0 for any day that had values for other keys for the same carrier
+            goodDay = goodDays[tuple(k[:-1])]
+            for i in xrange(len(v)):
+                if v[i] == '' and goodDay[i]:
+                    v[i] = 0
+
             # v is now a list of integers, one for each day of the month
             # first, remove any value had a missing '' value either before or after it
-            if k.startswith('2014-12-01'):
-                pass
-
             count = 0
             total = 0
             for i in xrange(len(v)):
@@ -233,7 +249,7 @@ class WebLogProcessor2(LogProcessor):
                         count += 1
             # Use monthly average for all missing/uncounted days when calculating monthly total
             total += int((float(total) / count) * (len(v) - count))
-            lines.append(k + ',' + str(total))
+            lines.append(','.join(k) + ',' + str(total))
 
         lines.sort()
 
@@ -330,10 +346,10 @@ class WebLogProcessor2(LogProcessor):
 
     def manualRun(self):
         self.allowEdit = False
-        self.runHql()
-        # stats = False
+        # self.runHql()
+        stats = False
         # stats = self.combineStats()
-        # self.generateGraphData(stats)
+        self.generateGraphData(stats)
 
 
 if __name__ == '__main__':
