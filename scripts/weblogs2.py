@@ -95,6 +95,8 @@ class WebLogProcessor2(LogProcessor):
         importStart = self.parseDate('2014-04-01', self.dateFormat)
         importEnd = self.parseDate('2014-05-01', self.dateFormat)
         defaultLaunched = self.parseDate('2000-01-01', self.dateFormat)
+        # If 'via' is opera only, up to and including this day add 'direct'
+        directProxyFixDate = self.parseDate('2014-07-03', self.dateFormat)
 
         wiki = self.getWiki()
         # https://zero.wikimedia.org/w/api.php?action=zeroportal&type=analyticsconfig&format=jsonfm
@@ -111,6 +113,9 @@ class WebLogProcessor2(LogProcessor):
                 c.languages = True if True == c.languages else set(c.languages)
                 c.sites = True if True == c.sites else set(c.sites)
                 c.via = set(c.via)
+                # Before this date 'DIRECT' was not explicit
+                if c.before <= directProxyFixDate and c.via == {'OPERA'}:
+                    c.via.add('DIRECT')
                 c.ipsets = set(c.ipsets)
                 c.enabled = 'enabled' not in c or c.enabled
                 # configs were created in april 2014, but zero has been running longer than that
