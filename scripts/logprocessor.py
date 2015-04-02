@@ -163,6 +163,7 @@ class ScriptProcessor(object):
 
     def defaultSettings(self, suffix):
         s = AttrDict()
+        s.apiUrl = 'https://zero.wikimedia.org/w/api.php'
         s.apiUsername = ''
         s.apiPassword = ''
         s.lastErrorMsg = ''
@@ -185,7 +186,7 @@ class ScriptProcessor(object):
 
     def getWiki(self):
         if not self._wiki:
-            self._wiki = api.wikimedia('zero', 'wikimedia', 'https')
+            self._wiki = api.Site(self.settings.apiUrl)
             if self.proxy:
                 self._wiki.session.proxies = {'http': 'http://%s:%d' % (self.proxy, self.proxyPort)}
             self._wiki.login(self.settings.apiUsername, self.settings.apiPassword, onDemand=True)

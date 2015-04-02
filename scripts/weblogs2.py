@@ -7,8 +7,10 @@ from time import strftime
 from calendar import monthrange
 
 from datetime import timedelta
-from pandas import read_table, pivot_table
-from pandas.core.frame import DataFrame
+from dateutil.relativedelta import relativedelta
+
+from pandas import read_table, pivot_table, DataFrame, MultiIndex
+# from pandas.core.frame import DataFrame
 import numpy as np
 
 from logprocessor import *
@@ -24,6 +26,84 @@ launchedOn = {
 def dateRange(start, before):
     for n in xrange(int((before - start).days)):
         yield start + timedelta(n)
+
+
+def daily(date, i=False):
+    """
+    :param date: date to trim to the beginning of the period
+    :return: if i, previous period, this period, next period; otherwise - date, period length, index in period
+    """
+    dt = date
+    if i:
+        return dt - timedelta(1), dt, dt + timedelta(1)
+    return dt, 1, 0
+
+
+def weekly(date, i=False):
+    """
+    :param date: date to trim to the beginning of the period
+    :return: if i, previous period, this period, next period; otherwise - date, period length, index in period
+    """
+    dt = date - timedelta(date.weekday())
+    if i:
+        return dt - timedelta(7), dt, dt + timedelta(7)
+    return dt, 7, date.weekday()
+
+
+def monthly(date, i=False):
+    """
+    :param date: date to trim to the beginning of the period
+    :return: if i, previous period, this period, next period; otherwise - date, period length, index in period
+    """
+    dt = date - timedelta(date.day - 1)
+    if i:
+        return dt - relativedelta(months=1), dt, dt + relativedelta(months=1)
+    return dt, monthrange(dt.year, dt.month)[1], date.day - 1
+
+
+def getHeaders(data):
+    # Adapted from pandas.core.format._helper_csv
+    if isinstance(data.index, MultiIndex):
+        headerFields = [v for (k, v) in enumerate(data.index.names)]
+        headerFields.append(data.name)
+    else:
+        headerFields = list(data.columns)
+    return ['' if v is None else v for v in headerFields]
+
+
+def insertMissingVals(lines, dateFunc):
+    lines.sort()
+    stats = {}
+    lastDate = None
+    prev, dt, nxt = None, None, None
+    extraLines = []
+    for line in lines:
+        date = line[0]
+        if lastDate != date:
+            prev, dt, nxt = dateFunc(date, True)
+            lastDate = date
+        key = tuple(line[1:-1])
+        if key not in stats:
+            stats[key] = dt
+        else:
+            lastDt = stats[key]
+            if lastDt < prev:
+                # Add an entry at the beginning of the gap
+                tmp = dateFunc(lastDt, True)[2]
+                extraLines.append([tmp] + list(key) + ['0'])
+                # Add an entry at the end of the gap
+                if tmp != prev:
+                    extraLines.append([prev] + list(key) + ['0'])
+            stats[key] = dt
+
+    # Insert trailing 0s in case we haven't seen them since
+    # We probably don't need them because line is not extrapolated after the last data point
+    # for key, dt in stats.iteritems():
+    #     tmp = dateFunc(dt, True)[2]
+    #     if tmp < lastDate:
+    #         extraLines.append([tmp] + list(key) + ['0'])
+
+    return lines + extraLines
 
 
 class WebLogProcessor2(LogProcessor):
@@ -90,7 +170,7 @@ class WebLogProcessor2(LogProcessor):
         if self._configs:
             return self._configs
 
-        launchedDates = dict([(k,self.parseDate(v, self.dateFormat)) for k,v in launchedOn.iteritems()])
+        launchedDates = dict([(k, self.parseDate(v, self.dateFormat)) for k, v in launchedOn.iteritems()])
         # If the very first config value starts on a date between these, treat all data as enabled
         importStart = self.parseDate('2014-04-01', self.dateFormat)
         importEnd = self.parseDate('2014-05-01', self.dateFormat)
@@ -200,44 +280,122 @@ class WebLogProcessor2(LogProcessor):
 
         stats = [list(k) + [v] for k, v in stats.iteritems()]
         writeData(self.combinedFile, stats, columnHdrResult)
-        return stats
 
-    def createMonthlyData(self, totals, headerFields, wikiTitle):
-        """
-        Convert daily totals to monthly totals
-        :param totals:
-        :param headerFields:
-        :param wikiTitle:
-        :return:
-        """
+    def generateGraphData(self):
+        safePrint('Generating and uploading data files')
 
-        # Map of key (month-day,xcs,XXX): [list counts of '', one for each day]
+        allData = read_table(self.combinedFile, sep='\t', na_filter=False, parse_dates=[0], infer_datetime_format=True)
+        xcsList = [xcs for xcs in allData.xcs.unique() if xcs != 'ERROR' and xcs[0:4] != 'TEST' and xcs != '000-00']
+
+        # filter type==DATA and site==wikipedia
+        allData = allData[(allData['xcs'].isin(xcsList)) & (allData['site'] == 'wikipedia')]
+
+        # By "via+iszero", e.g.  y,n,yO,nO,...
+        data = DataFrame(pivot_table(allData, 'count', ['date', 'xcs', 'via', 'iszero'], aggfunc=np.sum))
+        data.reset_index(inplace=True)
+        data['via'] = data.apply(lambda r: r['iszero'][:1] + r['via'][:1], axis=1)
+        data.drop('iszero', axis=1, inplace=True)
+        self.createClippedData('RawData:YearDailyViaIsZero', data)
+        self.createPeriodData('RawData:WeeklyViaIsZero', data, weekly)
+        self.createPeriodData('RawData:MonthlyViaIsZero', data, monthly)
+
+        allowedSubdomains = ['m', 'zero']
+        data = allData[(allData.ison == 'y') & (allData.iszero == 'y') & (allData.subdomain.isin(allowedSubdomains))]
+        data = DataFrame(pivot_table(data, 'count', ['date', 'xcs', 'subdomain'], aggfunc=np.sum))
+        data.reset_index(inplace=True)
+
+        self.saveWikiPage('RawData:DailySubdomains', data)  # TODO: DELETE this line
+        self.createClippedData('RawData:YearDailySubdomains', data)
+        self.createPeriodData('RawData:WeeklySubdomains', data, weekly)
+        self.createPeriodData('RawData:MonthlySubdomains', data, monthly)
+
+        # create an artificial yes/no/opera sums
+        opera = allData[(allData.via == 'OPERA') & (allData.iszero == 'y')]
+        opera['str'] = 'o'
+        yes = allData[allData.iszero == 'y']
+        yes['str'] = 'y'
+        no = allData[allData.iszero == 'n']
+        no['str'] = 'n'
+        combined = opera.append(yes).append(no)
+        data = DataFrame(pivot_table(combined, 'count', ['date', 'xcs', 'str'], aggfunc=np.sum))
+        data.reset_index(inplace=True)
+
+        headerFields = 'date,xcs,iszero,count'  # Override "str" as "iszero"
+        self.saveWikiPage('RawData:DailyTotals', data, headerFields)  # TODO: DELETE this line
+        self.createClippedData('RawData:YearDailyTotals', data, headerFields)
+        self.createPeriodData('RawData:MonthlyTotals', data, monthly, headerFields)
+
+        data = []
+        for xcsId in list(allData.xcs.unique()):
+            byLang = pivot_table(allData[allData.xcs == xcsId], 'count', ['lang'], aggfunc=np.sum) \
+                .order('count', ascending=False)
+            top = byLang.head(5)
+            vals = list(top.iteritems())
+            vals.append(('other', byLang.sum() - top.sum()))
+            valsTotal = sum([v[1] for v in vals]) / 100.0
+            data.extend(['%s,%s,%.1f' % (l, xcsId, c / valsTotal) for l, c in vals])
+
+        self.saveWikiPage('RawData:LangPercent', data, 'lang,xcs,count')
+
+    def createClippedData(self, wikiTitle, data, headerFields=False):
+        """
+        Convert daily data to monthly data
+        :type wikiTitle: string|string[]
+        :type data: mixed
+        :type headerFields: string|bool
+        """
+        if not headerFields:
+            headerFields = getHeaders(data)
+
+        minDate = datetime.today() - relativedelta(years=1)
+        clipped = data[data['date'] > minDate]
+
+        lines = [list(row) for _, row in clipped.iterrows()]
+        lines = insertMissingVals(lines, daily)
+        self.saveWikiPage(wikiTitle, lines, headerFields)
+
+    def createPeriodData(self, wikiTitle, data, dateFunc, headerFields=False):
+        """
+        Convert daily data to periodic data
+        :type wikiTitle: string|string[]
+        :type data: mixed
+        :type headerFields: string|bool
+        """
+        if not headerFields:
+            headerFields = getHeaders(data)
+
+        # Map of key (date,xcs,XXX): [list counts or '', one for each day]
         stats = {}
-        # Short key (month-date,xcs): [list of true/false, one for each day]
+        # Short key (date,xcs): [list of true/false, one for each day]
         goodDays = {}
-        for k, v in totals.iteritems():
-            date = k[0].split('-')
-            day = int(date[2]) - 1
-            key = tuple((date[0] + '-' + date[1] + '-01',) + k[1:])
-            if key in stats:
-                vals = stats[key]
+        for _, rowData in data.iterrows():
+            parts = list(rowData)
+            valueDate = parts[0]
+            valueKey = parts[:-1]
+            valueCount = parts[-1]
+            thisId, periodLen, periodInd = dateFunc(valueDate)
+            valueKey[0] = thisId
+            valueKey = tuple(valueKey)
+
+            if valueKey in stats:
+                vals = stats[valueKey]
             else:
                 # new list filled with ''s, one value for each day in the month
-                vals = [''] * monthrange(int(date[0]), int(date[1]))[1]
-                stats[key] = vals
-            if vals[day] != '':
-                raise IndexError('Duplicate key %s. Existing value %d' % (k, vals[day]))
-            vals[day] = v
+                vals = [''] * periodLen
+                stats[valueKey] = vals
+            if vals[periodInd] != '':
+                raise IndexError('Duplicate key %s. Existing value %d' % (vals, vals[periodInd]))
+            vals[periodInd] = valueCount
 
             # Create a list, one for each day of the month, True if any key exists for that day
-            key = tuple((date[0] + '-' + date[1] + '-01',) + k[1:-1])  # without the last key part
+            key = tuple(valueKey[:-1])  # without the last key part
             if key in goodDays:
                 vals = goodDays[key]
             else:
                 # new list filled with False, one value for each day in the month
-                vals = [False] * monthrange(int(date[0]), int(date[1]))[1]
+                vals = [False] * periodLen
                 goodDays[key] = vals
-            vals[day] = True
+            vals[periodInd] = True
 
         lines = []
         for k, v in stats.iteritems():
@@ -263,9 +421,46 @@ class WebLogProcessor2(LogProcessor):
                         count += 1
             # Use monthly average for all missing/uncounted days when calculating monthly total
             total += int((float(total) / count) * (len(v) - count))
-            lines.append(','.join(k) + ',' + str(total))
+            lines.append(list(k) + [str(total)])
 
-        lines.sort()
+        lines = insertMissingVals(lines, dateFunc)
+        self.saveWikiPage(wikiTitle, lines, headerFields)
+
+    def saveWikiPage(self, wikiTitle, data, headerFields=False):
+        """
+        :type wikiTitle: string|string[]
+        :type data: mixed
+        :type headerFields: string|bool
+        """
+        if isinstance(data, list):
+            if len(data) == 0:
+                text = ''
+            else:
+                if isinstance(data[0], list) and isinstance(data[0][0], datetime):
+                    lines = []
+                    for line in data:
+                        line[0] = line[0].strftime('%Y-%m-%d')
+                        line[-1] = str(line[-1])
+                        lines.append(','.join(line))
+                    lines.sort()
+                else:
+                    lines = data
+                text = '\n'.join(lines)
+        elif hasattr(data, 'to_csv'):
+            s = StringIO.StringIO()
+            if headerFields:
+                includeHeaders = False
+            else:
+                includeHeaders = True
+            data.to_csv(s, header=includeHeaders, index=False, date_format='%Y-%m-%d')
+            text = s.getvalue()
+        else:
+            raise Exception('Unknown data type ' + str(type(data)))
+
+        if headerFields:
+            if isinstance(headerFields, list):
+                headerFields = ','.join(headerFields)
+            text = '{0}\n{1}'.format(headerFields, text)
 
         if self.allowEdit:
             wiki = self.getWiki()
@@ -273,99 +468,24 @@ class WebLogProcessor2(LogProcessor):
                 'edit',
                 title=wikiTitle,
                 summary='refreshing data',
-                text=headerFields + '\n' + '\n'.join(lines),
-                token=wiki.token()
-            )
-
-    def generateGraphData(self, stats=None):
-        safePrint('Generating and uploading data files')
-
-        wiki = self.getWiki()
-
-        if not stats:
-            allData = read_table(self.combinedFile, sep='\t', na_filter=False)
-        else:
-            allData = DataFrame(stats, columns=columnHdrResult)
-
-        xcsList = [xcs for xcs in allData.xcs.unique() if xcs != 'ERROR' and xcs[0:4] != 'TEST']
-
-        # filter type==DATA and site==wikipedia
-        df = allData[(allData['xcs'].isin(xcsList)) & (allData['site'] == 'wikipedia')]
-
-        headerFields = 'date,xcs,subdomain,count'
-
-        s = StringIO.StringIO()
-        allowedSubdomains = ['m', 'zero']
-        dailySubdomains = df[(df.ison == 'y') & (df.iszero == 'y') & (df.subdomain.isin(allowedSubdomains))]
-        totals = pivot_table(dailySubdomains, 'count', ['date', 'xcs', 'subdomain'], aggfunc=np.sum)
-        totals.to_csv(s, header=False)
-
-        if self.allowEdit:
-            wiki(
-                'edit',
-                title='RawData:DailySubdomains',
-                summary='refreshing data',
-                text=headerFields + '\n' + s.getvalue(),
-                token=wiki.token()
-            )
-
-        self.createMonthlyData(totals, headerFields, 'RawData:MonthlySubdomains')
-
-        headerFields = 'date,xcs,iszero,count'
-        # create an artificial yes/no/opera sums
-        opera = df[(df.via == 'OPERA') & (df.iszero == 'y')]
-        opera['str'] = 'o'
-        yes = df[df.iszero == 'y']
-        yes['str'] = 'y'
-        no = df[df.iszero == 'n']
-        no['str'] = 'n'
-        combined = opera.append(yes).append(no)
-        s = StringIO.StringIO()
-        totals = pivot_table(combined, 'count', ['date', 'xcs', 'str'], aggfunc=np.sum)
-        totals.to_csv(s, header=False)
-
-        if self.allowEdit:
-            wiki(
-                'edit',
-                title='RawData:DailyTotals',
-                summary='refreshing data',
-                text=headerFields + '\n' + s.getvalue(),
-                token=wiki.token()
-            )
-
-        self.createMonthlyData(totals, headerFields, 'RawData:MonthlyTotals')
-
-        results = ['lang,xcs,count']
-        for xcsId in list(df.xcs.unique()):
-            byLang = pivot_table(df[df.xcs == xcsId], 'count', ['lang'], aggfunc=np.sum).order('count', ascending=False)
-            top = byLang.head(5)
-            vals = list(top.iteritems())
-            vals.append(('other', byLang.sum() - top.sum()))
-            valsTotal = sum([v[1] for v in vals]) / 100.0
-            results.extend(['%s,%s,%.1f' % (l, xcsId, c / valsTotal) for l, c in vals])
-
-        if self.allowEdit:
-            wiki(
-                'edit',
-                title='RawData:LangPercent',
-                summary='refreshing data',
-                text='\n'.join(results),
+                text=text,
                 token=wiki.token()
             )
 
     def run(self):
         self.runHql()
-        stats = self.combineStats()
-        self.generateGraphData(stats)
+        self.combineStats()
+        self.generateGraphData()
 
     def manualRun(self):
-        self.allowEdit = False
+        # self.allowEdit = False
         # self.runHql()
-        stats = False
-        # stats = self.combineStats()
-        self.generateGraphData(stats)
-
+        # w = self.getWiki()
+        # w.noSSL = True
+        # self.combineStats()
+        # self.generateGraphData()
+        pass
 
 if __name__ == '__main__':
-    # WebLogProcessor2().manualRun()
+    # WebLogProcessor2('settings/weblogs2.local.json').manualRun()
     WebLogProcessor2().safeRun()

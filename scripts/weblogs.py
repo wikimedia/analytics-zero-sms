@@ -321,10 +321,9 @@ class WebLogProcessor(LogProcessor):
             token=wiki.token()
         )
 
+        for xcs in list(df.xcs.unique()):
 
-        for id in list(df.xcs.unique()):
-
-            xcsDf = df[df.xcs == id]
+            xcsDf = df[df.xcs == xcs]
 
             # create an artificial yes/opera value
             opera = xcsDf[(xcsDf.via == 'OPERA') & (xcsDf.iszero == 'yes')]
@@ -344,7 +343,7 @@ class WebLogProcessor(LogProcessor):
 
             wiki(
                 'edit',
-                title='RawData:' + id,
+                title='RawData:' + xcs,
                 summary='refreshing data',
                 text=result,
                 token=wiki.token()
@@ -360,7 +359,7 @@ class WebLogProcessor(LogProcessor):
 
             wiki(
                 'edit',
-                title='RawData:' + id + '-langTotal',
+                title='RawData:' + xcs + '-langTotal',
                 summary='refreshing data',
                 text=result,
                 token=wiki.token()

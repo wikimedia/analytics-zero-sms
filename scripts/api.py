@@ -91,6 +91,7 @@ class Site(object):
         self.log = log if log else ConsoleLog()
         self.url = url
         self.tokens = {}
+        self.noSSL = False  # For non-ssl sites, it might be needed to avoid HTTPS
 
         try:
             script = os.path.abspath(sys.modules['__main__'].__file__)
@@ -121,7 +122,7 @@ class Site(object):
         """
         # Magic CAPS parameters
         method = 'POST' if 'POST' in kwargs or action in ['login', 'edit'] else 'GET'
-        forceSSL = action == 'login' or 'SSL' in kwargs or 'HTTPS' in kwargs
+        forceSSL = not self.noSSL and (action == 'login' or 'SSL' in kwargs or 'HTTPS' in kwargs)
         request_kw = dict() if 'EXTRAS' not in kwargs else kwargs['EXTRAS']
 
         # Clean up magic CAPS params as they shouldn't be passed to the server
@@ -179,6 +180,8 @@ class Site(object):
         Call Query API with given parameters, and yield all results returned
         by the server, properly handling result continuation.
         """
+        if 'rawcontinue' in kwargs:
+            raise ValueError("rawcontinue is not supported with query() function, use object's __call__()")
         if 'continue' not in kwargs:
             kwargs['continue'] = ''
         req = kwargs
@@ -244,9 +247,9 @@ class Site(object):
             else:
                 a[k] = val
 
-    def token(self, tokenType='edit'):
+    def token(self, tokenType='csrf'):
         if tokenType not in self.tokens:
-            self.tokens[tokenType] = self('tokens', type=tokenType)['tokens'][tokenType + 'token']
+            self.tokens[tokenType] = next(self.query(meta='tokens', type=tokenType))['tokens'][tokenType + 'token']
         return self.tokens[tokenType]
 
     def request(self, method, forceSSL=False, headers=None, **request_kw):
