@@ -300,10 +300,10 @@ class WebLogProcessor2(LogProcessor):
         # filter type==DATA and site==wikipedia
         allData = allData[(allData['xcs'].isin(xcsList)) & (allData['site'] == 'wikipedia')]
 
-        # By "via+iszero", e.g.  y,n,yO,nO,...
+        # By "iszero+via", e.g.  a,b,aO,bO,..., where 'a' == zero-rated, 'b' == non-zero-rated, and 'O' == Opera
         data = DataFrame(pivot_table(allData, 'count', ['date', 'xcs', 'via', 'iszero'], aggfunc=np.sum))
         data.reset_index(inplace=True)
-        data['via'] = data.apply(lambda r: r['iszero'][:1] + r['via'][:1], axis=1)
+        data['via'] = data.apply(lambda r: ('a' if r['iszero'][:1] == 'y' else 'b') + r['via'][:1], axis=1)
         data.drop('iszero', axis=1, inplace=True)
         self.createClippedData('RawData:YearDailyViaIsZero', data)
         self.createPeriodData('RawData:WeeklyViaIsZero', data, weekly)
