@@ -77,14 +77,24 @@ def insertMissingVals(lines, dateFunc):
     lastDate = None
     prev, dt, nxt = None, None, None
     extraLines = []
+    # Insert two zero values for each category for each xcs - one for the earliest day of the xcs data,
+    # and one - in the period preceding first available data point of that series
+    firstDate = {}
     for line in lines:
         date = line[0]
+        if line[1] not in firstDate:
+            firstDate[line[1]] = date
         if lastDate != date:
             prev, dt, nxt = dateFunc(date, True)
             lastDate = date
         key = tuple(line[1:-1])
         if key not in stats:
             stats[key] = dt
+            firstDt = firstDate[line[1]]
+            if firstDt < date:
+                extraLines.append([firstDt] + list(key) + ['0'])
+                if firstDt != prev:
+                    extraLines.append([prev] + list(key) + ['0'])
         else:
             lastDt = stats[key]
             if lastDt < prev:
