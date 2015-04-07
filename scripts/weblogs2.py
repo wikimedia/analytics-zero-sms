@@ -314,7 +314,6 @@ class WebLogProcessor2(LogProcessor):
         data = DataFrame(pivot_table(data, 'count', ['date', 'xcs', 'subdomain'], aggfunc=np.sum))
         data.reset_index(inplace=True)
 
-        self.saveWikiPage('RawData:DailySubdomains', data)  # TODO: DELETE this line
         self.createClippedData('RawData:YearDailySubdomains', data)
         self.createPeriodData('RawData:WeeklySubdomains', data, weekly)
         self.createPeriodData('RawData:MonthlySubdomains', data, monthly)
@@ -331,7 +330,6 @@ class WebLogProcessor2(LogProcessor):
         data.reset_index(inplace=True)
 
         headerFields = 'date,xcs,iszero,count'  # Override "str" as "iszero"
-        self.saveWikiPage('RawData:DailyTotals', data, headerFields)  # TODO: DELETE this line
         self.createClippedData('RawData:YearDailyTotals', data, headerFields)
         self.createPeriodData('RawData:MonthlyTotals', data, monthly, headerFields)
 
