@@ -117,7 +117,8 @@ def insertMissingVals(lines, dateFunc):
 
 
 class WebLogProcessor2(LogProcessor):
-    def __init__(self, settingsFile='settings/weblogs2.json'):
+    def __init__(self, settingsFile):
+        print('Using settings %s' % settingsFile)
         super(WebLogProcessor2, self).__init__(settingsFile, 'web2')
 
         self._configs = None
@@ -129,6 +130,10 @@ class WebLogProcessor2(LogProcessor):
     def defaultSettings(self, suffix):
         s = super(WebLogProcessor2, self).defaultSettings(suffix)
         s.checkAfterTs = False
+        s.hiveTable = 'wmf_raw.webrequest'
+        s.dstTable = 'zero_webstats'
+        s.hqlScript = 'zero-counts.hql'
+        s.wikiPageSuffix = ''
         return s
 
     def onSavingSettings(self):
@@ -146,9 +151,17 @@ class WebLogProcessor2(LogProcessor):
     def runHql(self):
         os.environ["HADOOP_HEAPSIZE"] = "2048"
 
-        for date in dateRange(self.settings.checkAfterTs, datetime.today()):
-            path = '/mnt/hdfs/wmf/data/raw/webrequest/webrequest_upload/hourly/%s/23' \
+        if self.settings.hiveTable == 'wmf_raw.webrequest':
+            pathFunc = lambda dt: '/mnt/hdfs/wmf/data/raw/webrequest/webrequest_upload/hourly/%s/23' \
                    % strftime("%Y/%m/%d", date.timetuple())
+        elif self.settings.hiveTable == 'wmf.webrequest':
+            pathFunc = lambda dt: '/mnt/hdfs/wmf/data/wmf/webrequest/webrequest_source=mobile/year=%s/month=%s/day=%s/hour=23' \
+                   % (date.year, date.month, date.day)
+        else:
+            raise 'Unknown hiveTable = ' + str(self.settings.hiveTable)
+
+        for date in dateRange(self.settings.checkAfterTs, datetime.today()):
+            path = pathFunc(date)
             if not os.path.exists(path):
                 continue
             size = sum(os.path.getsize(os.path.join(path, f)) for f in os.listdir(path) if
@@ -162,9 +175,10 @@ class WebLogProcessor2(LogProcessor):
                 continue
 
             cmd = ['hive',
-                   '-f', 'zero-counts.hql',
+                   '-f', self.settings.hqlScript,
                    '-S',  # --silent
-                   '-d', 'table=wmf_raw.webrequest',
+                   '-d', 'table=' + self.settings.hiveTable,
+                   '-d', 'dsttable=' + self.settings.,
                    '-d', 'year=' + strftime("%Y", date.timetuple()),
                    '-d', 'month=' + strftime("%m", date.timetuple()),
                    '-d', 'day=' + strftime("%d", date.timetuple()),
@@ -474,7 +488,7 @@ class WebLogProcessor2(LogProcessor):
             wiki = self.getWiki()
             wiki(
                 'edit',
-                title=wikiTitle,
+                title=wikiTitle + self.settings.wikiPageSuffix,
                 summary='refreshing data',
                 text=text,
                 token=wiki.token()
@@ -496,4 +510,5 @@ class WebLogProcessor2(LogProcessor):
 
 if __name__ == '__main__':
     # WebLogProcessor2('settings/weblogs2.local.json').manualRun()
-    WebLogProcessor2().safeRun()
+    import sys
+    WebLogProcessor2('settings/weblogs2.json' if len(sys.argv) < 2 else sys.argv[1]).safeRun()
