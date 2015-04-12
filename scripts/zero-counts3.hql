@@ -45,9 +45,9 @@ INSERT OVERWRITE TABLE ${dsttable}
             COALESCE(regexp_extract(x_analytics, 'proxy=([^\;]+)'), '') via,
             COALESCE(regexp_extract(x_analytics, 'zeronet=([^\;]+)'), '') ipset,
             if (x_analytics LIKE '%https=1%', 'https', '') https,
-            COALESCE(regexp_extract(uri_host, '^([A-Za-z0-9-]+)(\\.(zero|m))?\\.([a-z]*)\\.org$', 1), '') lang,
-            COALESCE(regexp_extract(uri_host, '^([A-Za-z0-9-]+)(\\.(zero|m))?\\.([a-z]*)\\.org$', 3), '') subdomain,
-            COALESCE(regexp_extract(uri_host, '^([A-Za-z0-9-]+)(\\.(zero|m))?\\.([a-z]*)\\.org$', 4), '') site
+            COALESCE(regexp_extract(lower(uri_host), '^([a-z0-9-]+)(\\.(zero|m))?\\.([a-z]*)\\.org$', 1), '') lang,
+            COALESCE(regexp_extract(lower(uri_host), '^([a-z0-9-]+)(\\.(zero|m))?\\.([a-z]*)\\.org$', 3), '') subdomain,
+            COALESCE(regexp_extract(lower(uri_host), '^([a-z0-9-]+)(\\.(zero|m))?\\.([a-z]*)\\.org$', 4), '') site
 
         FROM wmf.webrequest
         WHERE
