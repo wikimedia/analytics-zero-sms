@@ -5,7 +5,7 @@ SET hive.exec.compress.output=false;
 -- Count all per-country webrequests into a separate table
 --
 -- Usage:
---     hive -f cc-counts.hql -d year=2015 -d month=4 -d day=10 -d date=2015-04-10 -d dsttable=countrycounts
+--     hive -f countrycounts.hql -d year=2015 -d month=4 -d day=10 -d date=2015-04-10 -d dsttable=countrycounts
 --     Date is duplicated because I haven't figured an easy way to set date=printf()
 --
 -- set hivevar:year=2015;
@@ -33,8 +33,7 @@ ROW FORMAT DELIMITED
 -- ALTER TABLE ${dsttable} DROP IF EXISTS PARTITION(date < '${date}')
 
 
-INSERT OVERWRITE TABLE ${dsttable} PARTITION(date="${date}")
---IF NOT EXISTS
+INSERT OVERWRITE TABLE ${dsttable} PARTITION(date="${date}") IF NOT EXISTS
   SELECT
       via, https, uri_host, country,
       SUM(response_size) size,
