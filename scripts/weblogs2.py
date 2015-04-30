@@ -206,7 +206,7 @@ class WebLogProcessor2(LogProcessor):
 
         wiki = self.getWiki()
         # https://zero.wikimedia.org/w/api.php?action=zeroportal&type=analyticsconfig&format=jsonfm
-        configs = wiki('zeroportal', type='analyticsconfig').zeroportal
+        configs = wiki('zeroportal', type='analyticsconfig', formatversion=2).zeroportal
         for xcs, items in configs.iteritems():
             isFirst = True
             launched = launchedDates[xcs] if xcs in launchedDates else defaultLaunched

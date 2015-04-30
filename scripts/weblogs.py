@@ -55,7 +55,7 @@ class WebLogProcessor(LogProcessor):
     def downloadConfigs(self):
         wiki = self.getWiki()
         # https://zero.wikimedia.org/w/api.php?action=zeroportal&type=analyticsconfig&format=jsonfm
-        configs = wiki('zeroportal', type='analyticsconfig').zeroportal
+        configs = wiki('zeroportal', type='analyticsconfig', formatversion=2).zeroportal
         for cfs in configs.values():
             for c in cfs:
                 c['from'] = datetime.strptime(c['from'], '%Y-%m-%dT%H:%M:%SZ')
