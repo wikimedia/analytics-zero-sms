@@ -486,15 +486,20 @@ class WebLogProcessor2(LogProcessor):
                 headerFields = ','.join(headerFields)
             text = '{0}\n{1}'.format(headerFields, text)
 
+        title = wikiTitle + self.settings.wikiPageSuffix
         if self.allowEdit:
             wiki = self.getWiki()
             wiki(
                 'edit',
-                title=wikiTitle + self.settings.wikiPageSuffix,
+                title=title,
                 summary='refreshing data',
                 text=text,
                 token=wiki.token()
             )
+        else:
+            title = os.path.join(self.pathCache, title.replace(':','_').replace('/','_').replace('\\','_'))
+            with open(title, 'w') as f:
+                f.write(text)
 
     def run(self):
         self.runHql()
@@ -502,12 +507,12 @@ class WebLogProcessor2(LogProcessor):
         self.generateGraphData()
 
     def manualRun(self):
-        # self.allowEdit = False
+        self.allowEdit = False
         # self.runHql()
         # w = self.getWiki()
         # w.noSSL = True
         # self.combineStats()
-        # self.generateGraphData()
+        self.generateGraphData()
         pass
 
 

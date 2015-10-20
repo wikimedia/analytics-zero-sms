@@ -164,10 +164,10 @@ class Site(object):
         :param onDemand: if True, will postpone login until an actual API request is made
         :return:
         """
+        self.tokens = {}
         if onDemand:
             self._loginOnDemand = (user, password)
             return
-        self.tokens = {}
         res = self('login', lgname=user, lgpassword=password)['login']
         if res['result'] == 'NeedToken':
             res = self('login', lgname=user, lgpassword=password, lgtoken=res['token'])['login']
@@ -253,7 +253,7 @@ class Site(object):
         return self.tokens[tokenType]
 
     def request(self, method, forceSSL=False, headers=None, **request_kw):
-        """Make either a low level request to the server"""
+        """Make a low level request to the server"""
         url = self.url
         if forceSSL:
             parts = list(urlparse.urlparse(url))
@@ -276,7 +276,7 @@ class Site(object):
         return r
 
 
-def wikimedia(language='en', site='wikipedia', scheme='http', session=None, log=None):
+def wikimedia(language='en', site='wikipedia', scheme='https', session=None, log=None):
     """Create a Site object for Wikimedia Foundation site in this format:
         [scheme]://[language].[site].org/w/api.php
     """
